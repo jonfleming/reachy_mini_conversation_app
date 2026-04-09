@@ -14,7 +14,7 @@ class SleepWake(Tool):
     description = (
         "Put the robot to sleep or wake it up. "
         "ONLY use this tool when the user EXPLICITLY and SPECIFICALLY asks the robot "
-        "to go to sleep or to wake up. Do NOT use this tool for any other purpose."
+        "to go to sleep or to wake up. Do NOT use this tool for any other purpose. When asleep, be patient and wait for an explicit command before waking up"
     )
     parameters_schema = {
         "type": "object",
