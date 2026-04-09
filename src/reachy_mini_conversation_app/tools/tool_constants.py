@@ -15,3 +15,4 @@ class SystemTool(Enum):
 
     TASK_STATUS = "task_status"
     TASK_CANCEL = "task_cancel"
+    SLEEP_WAKE = "sleep_wake"

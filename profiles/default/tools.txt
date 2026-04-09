@@ -6,4 +6,3 @@ camera
 do_nothing
 head_tracking
 move_head
-sleep_wake
