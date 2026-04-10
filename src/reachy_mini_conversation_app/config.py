@@ -150,8 +150,12 @@ else:
 class Config:
     """Configuration class for the conversation app."""
 
-    # Required
+    # OpenAI (required when --agent openai)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # The key is downloaded in console.py if needed
+
+    # ElevenLabs (required when --agent elevenlabs)
+    ELEVENLABS_AGENT_ID = os.getenv("ELEVENLABS_AGENT_ID")
+    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")  # optional for public agents
 
     # Optional
     MODEL_NAME = os.getenv("MODEL_NAME", "gpt-realtime")

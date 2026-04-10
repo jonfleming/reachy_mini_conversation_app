@@ -69,7 +69,8 @@ class Dance(Tool):
 
         logger.info("Tool call: dance move=%s repeat=%d", move_name, repeat)
 
-        if not move_name or move_name == "random":
+        random_pick = not move_name or move_name == "random"
+        if random_pick:
             import random
 
             move_name = random.choice(list(AVAILABLE_MOVES.keys()))
@@ -77,10 +78,15 @@ class Dance(Tool):
         if move_name not in AVAILABLE_MOVES:
             return {"error": f"Unknown dance move '{move_name}'. Available: {list(AVAILABLE_MOVES.keys())}"}
 
+        logger.info("Dancing: move=%s repeat=%d (random=%s)", move_name, repeat, random_pick)
+
         # Add dance moves to queue
         movement_manager = deps.movement_manager
         for _ in range(repeat):
             dance_move = DanceQueueMove(move_name)
             movement_manager.queue_move(dance_move)
 
-        return {"status": "queued", "move": move_name, "repeat": repeat}
+        # Don't reveal the move name when it was randomly selected — prevents
+        # the agent from narrating which move was picked.
+        result_move = None if random_pick else move_name
+        return {"status": "queued", "move": result_move, "repeat": repeat}

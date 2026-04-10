@@ -61,16 +61,17 @@ class PlayEmotion(Tool):
             return {"error": "Emotion system not available"}
 
         emotion_name = kwargs.get("emotion")
-        if not emotion_name:
-            return {"error": "Emotion name is required"}
-
         logger.info("Tool call: play_emotion emotion=%s", emotion_name)
 
         # Check if emotion exists
         try:
+            import random
+
             emotion_names = RECORDED_MOVES.list_moves()
-            if emotion_name not in emotion_names:
-                return {"error": f"Unknown emotion '{emotion_name}'. Available: {emotion_names}"}
+            if not emotion_name or emotion_name not in emotion_names:
+                if emotion_name:
+                    logger.warning("Unknown emotion '%s', picking random fallback", emotion_name)
+                emotion_name = random.choice(emotion_names)
 
             # Add emotion to queue
             movement_manager = deps.movement_manager

@@ -44,6 +44,9 @@ yolo_vision = [
 mediapipe_vision = [
   "mediapipe==0.10.14",
 ]
+elevenlabs = [
+  "elevenlabs>=1.0.0",
+]
 all_vision = [
   "accelerate>=1.13.0",
   "torch>=2.1",

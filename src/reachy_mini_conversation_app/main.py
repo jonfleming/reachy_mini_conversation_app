@@ -51,7 +51,15 @@ def run(
     from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
 
     logger = setup_logger(args.debug)
-    logger.info("Starting Reachy Mini Conversation App")
+    agent = getattr(args, "agent", "openai")
+    logger.info("Starting Reachy Mini Conversation App (agent=%s)", agent)
+
+    if agent == "elevenlabs":
+        from reachy_mini_conversation_app.config import config as _cfg
+
+        if not _cfg.ELEVENLABS_AGENT_ID:
+            logger.error("ELEVENLABS_AGENT_ID is not set. Add it to your .env file.")
+            sys.exit(1)
 
     if args.no_camera and args.head_tracker is not None:
         logger.warning(
@@ -138,11 +146,47 @@ def run(
     )
     logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
 
-    handler = OpenaiRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
+    stream_manager: Any = None
 
-    stream_manager: gr.Blocks | LocalStream | None = None
+    if agent == "elevenlabs":
+        from reachy_mini_conversation_app.config import config as _cfg
+        from reachy_mini_conversation_app.elevenlabs_agent import ElevenLabsConfig, ElevenLabsStream
 
-    if args.gradio:
+        el_config = ElevenLabsConfig(
+            agent_id=_cfg.ELEVENLABS_AGENT_ID,  # type: ignore[arg-type]
+            api_key=_cfg.ELEVENLABS_API_KEY,
+            requires_auth=bool(_cfg.ELEVENLABS_API_KEY),
+        )
+        stream_manager = ElevenLabsStream(el_config, robot, deps)
+
+        if args.gradio:
+            with gr.Blocks(title="Reachy Mini") as _control_ui:
+                with gr.Row():
+                    _sleep_btn = gr.Button("Sleep")
+                    _wake_btn = gr.Button("Wake Up")
+                _status = gr.Textbox(label="Status", interactive=False)
+
+                def _do_sleep() -> str:
+                    deps.is_sleeping = True
+                    deps.movement_manager.set_sleeping(True)
+                    robot.goto_sleep()
+                    return "Sleeping"
+
+                def _do_wake() -> str:
+                    robot.wake_up()
+                    deps.movement_manager.set_sleeping(False)
+                    deps.is_sleeping = False
+                    return "Awake"
+
+                _sleep_btn.click(fn=_do_sleep, outputs=[_status])
+                _wake_btn.click(fn=_do_wake, outputs=[_status])
+
+            _control_ui.launch(prevent_thread_lock=True)
+
+    else:
+        handler = OpenaiRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
+
+    if agent != "elevenlabs" and args.gradio:
         api_key_textbox = gr.Textbox(
             label="OPENAI API Key",
             type="password",
@@ -198,8 +242,8 @@ def run(
             wake_btn.click(fn=_do_wake, outputs=[sleep_status])
 
         app = gr.mount_gradio_app(app, stream.ui, path="/")
-    else:
-        # In headless mode, wire settings_app + instance_path to console LocalStream
+    elif agent != "elevenlabs":
+        # OpenAI headless mode
         stream_manager = LocalStream(
             handler,
             robot,
@@ -209,7 +253,7 @@ def run(
 
     # Each async service → its own thread/loop
     movement_manager.start()
-    head_wobbler.start()
+    head_wobbler.start()  # needed for both OpenAI and ElevenLabs
     if camera_worker:
         camera_worker.start()
 
