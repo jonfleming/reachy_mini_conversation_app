@@ -1057,8 +1057,8 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self._realtime_connect_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
         return AsyncOpenAI(
             api_key=resolved_api_key or "DUMMY",
-            base_url=urlunsplit(("https" if parsed.scheme == "wss" else "http", parsed.netloc, base_path, "", "")),
-            websocket_base_url=urlunsplit((parsed.scheme, parsed.netloc, base_path, "", "")),
+            base_url="http://localhost:8765/v1",
+            websocket_base_url="ws://localhost:8765/v1",
         )
 
     async def send_idle_signal(self, idle_duration: float) -> None:
