@@ -240,8 +240,15 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
+                session_start = asyncio.get_event_loop().time()
                 await self._run_realtime_session()
+                elapsed = asyncio.get_event_loop().time() - session_start
                 # Normal exit from the session, stop retrying
+                logger.warning(
+                    "SESSION_EXIT: _run_realtime_session() returned normally after %.1fs (attempt %d/%d). "
+                    "No exception was raised — the WebSocket likely closed gracefully.",
+                    elapsed, attempt, max_attempts,
+                )
                 return
             except ConnectionClosedError as e:
                 # Abrupt close (e.g., "no close frame received or sent") → retry
@@ -506,6 +513,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
 
             response_sender_task: asyncio.Task[None] | None = None
+            heartbeat_task: asyncio.Task[None] | None = None
             try:
                 # Start the background tool manager
                 self.tool_manager.start_up(tool_callbacks=[self._handle_tool_result])
@@ -515,7 +523,27 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     self._response_sender_loop(), name="response-sender"
                 )
 
+                # Start a heartbeat logger to track session liveness
+                async def _heartbeat_loop() -> None:
+                    session_start = asyncio.get_event_loop().time()
+                    event_count = 0
+                    while True:
+                        await asyncio.sleep(60)
+                        elapsed = asyncio.get_event_loop().time() - session_start
+                        mins = int(elapsed // 60)
+                        secs = int(elapsed % 60)
+                        logger.info(
+                            "HEARTBEAT: session alive for %dm%ds, connection=%s, cumulative_cost=$%.4f",
+                            mins, secs,
+                            "OPEN" if self.connection else "CLOSED",
+                            self.cumulative_cost,
+                        )
+
+                heartbeat_task = asyncio.create_task(_heartbeat_loop(), name="heartbeat")
+
+                event_count = 0
                 async for event in self.connection:
+                    event_count += 1
                     logger.debug(f"OpenAI event: {event.type}")
                     if event.type == "input_audio_buffer.speech_started":
                         if hasattr(self, "_clear_queue") and callable(self._clear_queue):
@@ -674,7 +702,33 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                             await self.output_queue.put(
                                 AdditionalOutputs({"role": "assistant", "content": f"[error] {msg}"})
                             )
+                # If we get here, the event loop ended (WebSocket closed)
+                logger.warning(
+                    "SESSION_END: WebSocket event loop exited normally after %d events. "
+                    "This likely means OpenAI closed the connection (session duration limit?).",
+                    event_count,
+                )
+                # Try to log the close code/reason from the underlying websocket
+                try:
+                    ws = getattr(conn, "ws", None) or getattr(conn, "_ws", None) or getattr(conn, "websocket", None)
+                    if ws is not None:
+                        close_code = getattr(ws, "close_code", None)
+                        close_reason = getattr(ws, "close_reason", None)
+                        logger.warning("SESSION_END: WebSocket close_code=%s, close_reason=%s", close_code, close_reason)
+                    else:
+                        logger.warning("SESSION_END: Could not access underlying WebSocket for close details")
+                except Exception as e:
+                    logger.warning("SESSION_END: Error getting close details: %s", e)
+
             finally:
+                # Stop the heartbeat
+                if heartbeat_task is not None:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+
                 # Stop the response sender worker.
                 if response_sender_task is not None:
                     response_sender_task.cancel()
