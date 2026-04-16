@@ -46,6 +46,7 @@ mediapipe_vision = [
 ]
 elevenlabs = [
   "elevenlabs>=1.0.0",
+  "sounddevice>=0.5",
 ]
 all_vision = [
   "accelerate>=1.13.0",

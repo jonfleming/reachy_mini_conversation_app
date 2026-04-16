@@ -62,10 +62,7 @@ def run(
             sys.exit(1)
 
     if args.no_camera and args.head_tracker is not None:
-        logger.warning(
-            "Head tracking disabled: --no-camera flag is set. "
-            "Remove --no-camera to enable head tracking."
-        )
+        logger.warning("Head tracking disabled: --no-camera flag is set. Remove --no-camera to enable head tracking.")
 
     if robot is None:
         try:
@@ -77,25 +74,17 @@ def run(
             robot = ReachyMini(**robot_kwargs)
 
         except TimeoutError as e:
-            logger.error(
-                "Connection timeout: Failed to connect to Reachy Mini daemon. "
-                f"Details: {e}"
-            )
+            logger.error(f"Connection timeout: Failed to connect to Reachy Mini daemon. Details: {e}")
             log_connection_troubleshooting(logger, args.robot_name)
             sys.exit(1)
 
         except ConnectionError as e:
-            logger.error(
-                "Connection failed: Unable to establish connection to Reachy Mini. "
-                f"Details: {e}"
-            )
+            logger.error(f"Connection failed: Unable to establish connection to Reachy Mini. Details: {e}")
             log_connection_troubleshooting(logger, args.robot_name)
             sys.exit(1)
 
         except Exception as e:
-            logger.error(
-                f"Unexpected error during robot initialization: {type(e).__name__}: {e}"
-            )
+            logger.error(f"Unexpected error during robot initialization: {type(e).__name__}: {e}")
             logger.error("Please check your configuration and try again.")
             sys.exit(1)
 
@@ -156,8 +145,9 @@ def run(
             agent_id=_cfg.ELEVENLABS_AGENT_ID,  # type: ignore[arg-type]
             api_key=_cfg.ELEVENLABS_API_KEY,
             requires_auth=bool(_cfg.ELEVENLABS_API_KEY),
+            no_emotion_tags=args.no_emotion_tags,
         )
-        stream_manager = ElevenLabsStream(el_config, robot, deps)
+        stream_manager = ElevenLabsStream(el_config, robot, deps, system_audio=args.system_audio)
 
         if args.gradio:
             with gr.Blocks(title="Reachy Mini") as _control_ui:
@@ -276,6 +266,11 @@ def run(
     except KeyboardInterrupt:
         logger.info("Keyboard interruption in main thread... closing server.")
     finally:
+        if hasattr(stream_manager, "close"):
+            try:
+                stream_manager.close()
+            except Exception as e:
+                logger.debug(f"Error closing stream manager: {e}")
         movement_manager.stop()
         head_wobbler.stop()
         if camera_worker:

@@ -41,6 +41,18 @@ def parse_args() -> tuple[argparse.Namespace, list]:  # type: ignore
         help="Use local vision model instead of gpt-realtime vision",
     )
     parser.add_argument("--gradio", default=False, action="store_true", help="Open gradio interface")
+    parser.add_argument(
+        "--system-audio",
+        default=False,
+        action="store_true",
+        help="Use macOS system audio (mic/speakers) instead of the robot's hardware (ElevenLabs only)",
+    )
+    parser.add_argument(
+        "--no-emotion-tags",
+        default=False,
+        action="store_true",
+        help="Suppress inline [emotion] tags in agent speech (ElevenLabs only)",
+    )
     parser.add_argument("--debug", default=False, action="store_true", help="Enable debug logging")
     parser.add_argument(
         "--robot-name",
