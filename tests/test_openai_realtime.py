@@ -29,7 +29,7 @@ def _build_handler(loop: asyncio.AbstractEventLoop) -> OpenaiRealtimeHandler:
 @pytest.mark.asyncio
 async def test_tool_completion_does_not_reset_head_wobbler(monkeypatch: Any) -> None:
     """Tool completion should not interrupt ongoing speech wobble."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
@@ -137,7 +137,7 @@ async def test_tool_completion_does_not_reset_head_wobbler(monkeypatch: Any) -> 
 @pytest.mark.asyncio
 async def test_non_idle_tool_call_does_not_queue_progress_response(monkeypatch: Any) -> None:
     """Tool-call startup should not enqueue a second speech response."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
@@ -235,7 +235,7 @@ async def test_non_idle_tool_call_does_not_queue_progress_response(monkeypatch: 
 @pytest.mark.asyncio
 async def test_user_speech_events_reset_idle_timer(monkeypatch: Any) -> None:
     """User speech/transcription events should postpone idle behavior."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
@@ -329,7 +329,7 @@ async def test_user_speech_events_reset_idle_timer(monkeypatch: Any) -> None:
 @pytest.mark.asyncio
 async def test_partial_transcription_uses_latest_snapshot(monkeypatch: Any) -> None:
     """Partial transcription snapshots should replace older snapshots for the same item."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
@@ -420,7 +420,7 @@ async def test_partial_transcription_uses_latest_snapshot(monkeypatch: Any) -> N
 @pytest.mark.asyncio
 async def test_output_audio_delta_passes_output_sample_rate_to_head_wobbler(monkeypatch: Any) -> None:
     """Assistant audio deltas should propagate the realtime output sample rate to the head wobbler."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
@@ -518,7 +518,7 @@ async def test_output_audio_delta_passes_output_sample_rate_to_head_wobbler(monk
 @pytest.mark.asyncio
 async def test_debug_mode_writes_assistant_audio_dump_wav(monkeypatch: Any, tmp_path: Any) -> None:
     """Completed assistant audio streams should be dumped to a WAV file in debug mode."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
@@ -766,7 +766,7 @@ async def test_start_up_s2s_gradio_does_not_wait_for_api_key(monkeypatch: Any) -
 @pytest.mark.asyncio
 async def test_run_realtime_session_uses_default_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
     """Use the backend default speaker when no profile voice is selected for the s2s LB."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: default)
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
@@ -843,7 +843,7 @@ async def test_run_realtime_session_uses_default_voice_for_lb_allocated_sessions
 @pytest.mark.asyncio
 async def test_run_realtime_session_passes_allocated_session_query(monkeypatch: Any) -> None:
     """Speech-to-speech sessions must forward the allocated session token to the websocket connect call."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: default)
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
@@ -925,7 +925,7 @@ async def test_handler_uses_openai_sample_rate_for_openai_backend(monkeypatch: A
 @pytest.mark.asyncio
 async def test_apply_personality_uses_selected_voice_for_lb_allocated_sessions(monkeypatch: Any) -> None:
     """Live personality updates should honor the selected Qwen CustomVoice speaker."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "new instructions")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "new instructions")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "Serena")
     monkeypatch.setattr(config, "BACKEND_PROVIDER", "speech-to-speech")
     monkeypatch.setattr(config, "S2S_REALTIME_SESSION_URL", "https://lb.example.test/session")
@@ -1019,7 +1019,7 @@ async def test_response_sender_retries_when_active_response_error_uses_type_only
     That should still take the retry path and must not be surfaced as a user-facing error.
     """
     caplog.set_level(logging.DEBUG)
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
@@ -1154,7 +1154,7 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
 
     FakeCCE = type("FakeCCE", (Exception,), {})
     monkeypatch.setattr(rt_mod, "ConnectionClosedError", FakeCCE)
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "test")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda **_: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=DEFAULT_VOICE: "alloy")
     monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
 
