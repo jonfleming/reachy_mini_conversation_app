@@ -1,0 +1,216 @@
+"""Memory manager for Reachy Mini conversation app.
+
+Two tiers:
+  1. Conversation logs  — plain-text, one file per session
+  2. Active memory       — facts injected into the system prompt
+"""
+
+from __future__ import annotations
+import json
+import logging
+import threading
+from typing import Any
+from pathlib import Path
+from datetime import datetime, timezone
+
+
+logger = logging.getLogger(__name__)
+
+# Token estimation: GPT-4 family averages ~4 chars/token for English.
+# We use 3.5 to be conservative.
+_CHARS_PER_TOKEN = 3.5
+ACTIVE_MEMORY_TOKEN_WARN = 1500
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, int(len(text) / _CHARS_PER_TOKEN))
+
+
+class MemoryManager:
+    """Manages conversation logs and active memory.
+
+    Thread-safe: all public methods that touch active memory acquire self._lock.
+    Conversation log appends are atomic on Linux for small writes.
+    """
+
+    def __init__(self, data_dir: Path) -> None:
+        """Initialize the memory manager with the given data directory."""
+        self._lock = threading.Lock()
+        self._data_dir = data_dir
+        self._memory_dir = data_dir / "memory"
+        self._active_path = self._memory_dir / "active_memory.md"
+        self._logs_dir = self._memory_dir / "logs"
+        self._session_log_path: Path | None = None
+        self._ensure_dirs()
+        self._start_session_log()
+        logger.info("MemoryManager initialized: data_dir=%s", data_dir)
+
+    def _ensure_dirs(self) -> None:
+        for d in (self._memory_dir, self._logs_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Session lifecycle
+    # ------------------------------------------------------------------
+
+    def new_session(self) -> None:
+        """Rotate session log file when a new realtime session starts."""
+        self._start_session_log()
+        logger.info("MemoryManager new session: %s", self._session_log_path.name if self._session_log_path else "?")
+
+    def _start_session_log(self) -> None:
+        """Create a new session log file with a header."""
+        now = datetime.now(timezone.utc)
+        base = now.strftime("%Y-%m-%d_%H-%M")
+        path = self._logs_dir / f"{base}.log"
+        suffix = 2
+        while path.exists():
+            path = self._logs_dir / f"{base}_{suffix}.log"
+            suffix += 1
+        try:
+            path.write_text(
+                f"--- session {now.strftime('%Y-%m-%d %H:%M')} UTC ---\n\n",
+                encoding="utf-8",
+            )
+        except OSError as e:
+            logger.warning("Failed to create session log: %s", e)
+        self._session_log_path = path
+
+    # ------------------------------------------------------------------
+    # Tier 1: Conversation logging
+    # ------------------------------------------------------------------
+
+    def _append_log(self, line: str) -> None:
+        """Append a plain-text line to the current session log."""
+        if self._session_log_path is None:
+            return
+        try:
+            with open(self._session_log_path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError as e:
+            logger.warning("Failed to write conversation log: %s", e)
+
+    def log_turn(self, role: str, content: str) -> None:
+        """Log a user or assistant transcript turn."""
+        if not content or not content.strip():
+            return
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        self._append_log(f"{ts} {role}: {content.strip()}")
+
+    def log_tool_call(
+        self, tool_name: str, args: dict[str, Any] | None = None, result: dict[str, Any] | None = None
+    ) -> None:
+        """Log a completed tool call."""
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        args_str = json.dumps(args or {}, ensure_ascii=False)
+        result_str = json.dumps(result or {}, ensure_ascii=False)
+        self._append_log(f"{ts} tool: {tool_name}({args_str}) -> {result_str}")
+
+    # ------------------------------------------------------------------
+    # Tier 2: Active memory (read / write / prompt injection)
+    # ------------------------------------------------------------------
+
+    def _read_active_lines(self) -> list[str]:
+        """Return non-empty lines from active_memory.md. Lock must be held."""
+        if not self._active_path.exists():
+            return []
+        try:
+            return [ln for ln in self._active_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        except OSError:
+            return []
+
+    def _write_active_lines(self, lines: list[str]) -> None:
+        """Write lines to active_memory.md. Lock must be held."""
+        try:
+            self._active_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        except OSError as e:
+            logger.warning("Failed to write active memory: %s", e)
+
+    def save_memory(self, fact: str) -> dict[str, Any]:
+        """Add a fact to active memory.
+
+        Returns a result dict suitable for tool return values.
+        """
+        fact = fact.strip()
+        if not fact:
+            return {"error": "fact must be a non-empty string"}
+
+        log_name = self._session_log_path.name if self._session_log_path else "unknown"
+        entry = f"{fact} ({log_name})"
+
+        with self._lock:
+            lines = self._read_active_lines()
+            lines.append(entry)
+            self._write_active_lines(lines)
+
+            tokens = _estimate_tokens("\n".join(lines))
+            if tokens > ACTIVE_MEMORY_TOKEN_WARN:
+                logger.warning(
+                    "Active memory is large: ~%d tokens (%d entries). "
+                    "Consider pruning old entries.",
+                    tokens, len(lines),
+                )
+
+        logger.info("Memory saved: %s", fact[:80])
+        return {"status": "saved", "fact": fact}
+
+    # ------------------------------------------------------------------
+    # Tier 3: Recall (read session logs)
+    # ------------------------------------------------------------------
+
+    def _list_log_files(self) -> list[str]:
+        """Return available log filenames, newest first."""
+        try:
+            return sorted(
+                (f.name for f in self._logs_dir.glob("*.log")),
+                reverse=True,
+            )
+        except OSError:
+            return []
+
+    def recall_memory(self, log_ref: str) -> dict[str, Any]:
+        """Read a session log file and return its content.
+
+        If log_ref is empty, returns the list of available log files.
+        If the file doesn't exist, returns an error with the list of available files.
+        """
+        available = self._list_log_files()
+
+        if not log_ref or not log_ref.strip():
+            return {"available_logs": available}
+
+        path = self._logs_dir / log_ref.strip()
+        if not path.exists() or not path.is_file():
+            return {
+                "error": f"Log file '{log_ref}' not found.",
+                "available_logs": available,
+            }
+
+        try:
+            content = path.read_text(encoding="utf-8")
+            return {"log_ref": log_ref, "content": content}
+        except OSError as e:
+            return {"error": f"Failed to read '{log_ref}': {e}"}
+
+    # ------------------------------------------------------------------
+    # Prompt injection
+    # ------------------------------------------------------------------
+
+    def get_memory_block(self) -> str:
+        """Return the formatted memory block for system prompt injection.
+
+        Returns an empty string if active memory is empty.
+        """
+        with self._lock:
+            lines = self._read_active_lines()
+
+        if not lines:
+            return ""
+
+        return (
+            "\n\n## MEMORY\n"
+            "The following facts were saved from previous conversations. "
+            "Use them to personalize responses. You can save new memories with "
+            "save_memory and search older context with recall_memory.\n\n"
+            + "\n".join(lines)
+        )
