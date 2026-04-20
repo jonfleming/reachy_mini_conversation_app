@@ -308,6 +308,25 @@ class TestFindRelatedMemories:
         results = manager.find_related_memories(query="prefers")
         assert [r["id"] for r in results] == [new]
 
+    def test_body_preview_carried_when_requested(self, manager: MemoryManager) -> None:
+        """body_preview_chars > 0 carries a preview so callers can skip a follow-up read."""
+        mid = _memory_id("chess", hex3="aaa")
+        long_body = "TLDR first line.\n" + "x" * 500
+        manager.write_memory(mid, long_body, kind="preference", tags=["chess"])
+        results = manager.find_related_memories(query="chess", body_preview_chars=50)
+        assert results
+        preview = results[0]["body_preview"]
+        assert preview.startswith("TLDR first line.")
+        assert preview.endswith("…")
+        assert len(preview) <= 51  # 50 chars + ellipsis
+
+    def test_body_preview_absent_by_default(self, manager: MemoryManager) -> None:
+        """With body_preview_chars=0 the preview field is omitted."""
+        mid = _memory_id("chess", hex3="aaa")
+        manager.write_memory(mid, "TLDR.", kind="preference", tags=["chess"])
+        [result] = manager.find_related_memories(query="chess", body_preview_chars=0)
+        assert "body_preview" not in result
+
 
 # ------------------------------------------------------------------
 # Log processed move

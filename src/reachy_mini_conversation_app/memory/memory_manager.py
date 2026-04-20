@@ -399,6 +399,7 @@ class MemoryManager:
         query: str = "",
         tags: list[str] | None = None,
         limit: int = 10,
+        body_preview_chars: int = 0,
     ) -> list[dict[str, Any]]:
         """Rank memories by how many substring matches they get for ``query``/``tags``.
 
@@ -406,6 +407,12 @@ class MemoryManager:
         per-memory haystack built from ``id``, ``tags``, ``kind``, the
         one-line summary, and the full body. No fuzzy matching, no
         embeddings — just ``needle in haystack``.
+
+        When ``body_preview_chars`` > 0, each result carries a
+        ``body_preview`` field — the first N characters of the body —
+        so the dreamer can decide whether it needs a follow-up
+        ``read_memory`` call at all. 0 omits the field, matching the
+        original behaviour.
 
         Returns up to ``limit`` entries, ranked by descending score.
         Same shape as :py:meth:`list_memories` plus a ``score`` field.
@@ -441,7 +448,7 @@ class MemoryManager:
             score = sum(1 for needle in needles if needle in haystack)
             if score == 0:
                 continue
-            scored.append((score, {
+            entry: dict[str, Any] = {
                 "id": mem_id,
                 "summary": summary,
                 "tags": list(tags_val),
@@ -449,7 +456,14 @@ class MemoryManager:
                 "pinned": bool(meta.get("pinned", False)),
                 "created": meta.get("created"),
                 "score": score,
-            }))
+            }
+            if body_preview_chars > 0:
+                stripped = body.strip()
+                entry["body_preview"] = (
+                    stripped if len(stripped) <= body_preview_chars
+                    else stripped[:body_preview_chars].rstrip() + "…"
+                )
+            scored.append((score, entry))
         scored.sort(key=lambda sc: (-sc[0], sc[1]["id"]))
         return [entry for _, entry in scored[:max(1, limit)]]
 

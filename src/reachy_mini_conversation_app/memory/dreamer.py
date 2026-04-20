@@ -183,8 +183,10 @@ DREAMER_TOOL_SPECS: list[dict[str, Any]] = [
             "Search existing memories by free-text query and/or tags. Case-insensitive "
             "substring match over id, tags, kind, summary, and body. Ranked by descending "
             "number of matches. Returns the same shape as list_existing_memories plus a "
-            "`score` field. Prefer this over repeated list_existing_memories(tag=...) calls "
-            "when you're checking whether a topic already has a memory."
+            "`score` field and (by default) a ~300-char `body_preview`, so you usually do "
+            "NOT need a follow-up read_memory call to decide whether to update vs create. "
+            "Prefer this over repeated list_existing_memories(tag=...) calls when you're "
+            "checking whether a topic already has a memory."
         ),
         "parameters": {
             "type": "object",
@@ -201,6 +203,13 @@ DREAMER_TOOL_SPECS: list[dict[str, Any]] = [
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of matches to return (default 10).",
+                },
+                "body_preview_chars": {
+                    "type": "integer",
+                    "description": (
+                        "If > 0, each result carries a body_preview field with the first N "
+                        "characters of the body. Default 300. Set to 0 to omit previews."
+                    ),
                 },
             },
             "required": [],
@@ -591,7 +600,14 @@ class Dreamer:
         query = args.get("query") or ""
         tags = args.get("tags") or None
         limit = int(args.get("limit") or 10)
-        items = self.manager.find_related_memories(query=query, tags=tags, limit=limit)
+        preview = args.get("body_preview_chars")
+        preview_chars = 300 if preview is None else int(preview)
+        items = self.manager.find_related_memories(
+            query=query,
+            tags=tags,
+            limit=limit,
+            body_preview_chars=max(0, preview_chars),
+        )
         return {"count": len(items), "memories": items}
 
     def _tool_read_memory(self, args: dict[str, Any], _: DreamLogStats) -> dict[str, Any]:
