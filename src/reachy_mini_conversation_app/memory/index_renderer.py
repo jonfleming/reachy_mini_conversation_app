@@ -91,7 +91,7 @@ def render_index(memories: list[dict[str, Any]], now: datetime | None = None) ->
     if recent:
         groups = _group_by_primary_tag(recent)
         for tag in sorted(groups):
-            lines.append(f"### {tag.capitalize() if tag != 'untagged' else 'Untagged'}")
+            lines.append(f"### {tag}")
             for mem in sorted(groups[tag], key=lambda m: m.get("created") or m["id"]):
                 lines.append(_fmt_entry(mem))
     else:

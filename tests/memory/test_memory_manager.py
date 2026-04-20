@@ -326,8 +326,8 @@ class TestIndexRenderer:
             },
         ]
         out = render_index(mems, now=now)
-        assert "### Chess" in out
-        assert "### Board-games" in out
+        assert "### chess" in out
+        assert "### board-games" in out
 
     def test_older_section_shows_counts(self) -> None:
         """Older memories collapse to ranked tag counts."""
