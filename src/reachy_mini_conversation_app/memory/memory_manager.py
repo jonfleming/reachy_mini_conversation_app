@@ -393,6 +393,66 @@ class MemoryManager:
             })
         return out
 
+    def find_related_memories(
+        self,
+        *,
+        query: str = "",
+        tags: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Rank memories by how many substring matches they get for ``query``/``tags``.
+
+        Scoring is plain case-insensitive substring containment over a
+        per-memory haystack built from ``id``, ``tags``, ``kind``, the
+        one-line summary, and the full body. No fuzzy matching, no
+        embeddings — just ``needle in haystack``.
+
+        Returns up to ``limit`` entries, ranked by descending score.
+        Same shape as :py:meth:`list_memories` plus a ``score`` field.
+        """
+        needles: list[str] = []
+        if query:
+            needles.extend(tok for tok in query.lower().split() if tok)
+        if tags:
+            needles.extend(t.lower() for t in tags if t)
+        if not needles:
+            return []
+
+        scored: list[tuple[int, dict[str, Any]]] = []
+        for path in sorted(self._memories_dir.glob("*.md")):
+            try:
+                text = path.read_text(encoding="utf-8")
+                meta, body = parse_frontmatter(text)
+            except (OSError, ValueError) as e:
+                logger.warning("Skipping unreadable memory %s: %s", path.name, e)
+                continue
+            if meta.get("superseded_by"):
+                continue
+            mem_id = meta.get("id") or path.stem
+            tags_val = meta.get("tags") or []
+            summary = _one_line_summary(body)
+            haystack = " ".join([
+                mem_id,
+                " ".join(tags_val),
+                str(meta.get("kind") or ""),
+                summary,
+                body,
+            ]).lower()
+            score = sum(1 for needle in needles if needle in haystack)
+            if score == 0:
+                continue
+            scored.append((score, {
+                "id": mem_id,
+                "summary": summary,
+                "tags": list(tags_val),
+                "kind": meta.get("kind"),
+                "pinned": bool(meta.get("pinned", False)),
+                "created": meta.get("created"),
+                "score": score,
+            }))
+        scored.sort(key=lambda sc: (-sc[0], sc[1]["id"]))
+        return [entry for _, entry in scored[:max(1, limit)]]
+
     # ------------------------------------------------------------------
     # Prompt injection
     # ------------------------------------------------------------------

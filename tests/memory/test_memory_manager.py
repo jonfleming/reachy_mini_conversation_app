@@ -246,6 +246,70 @@ class TestMemoryFiles:
 
 
 # ------------------------------------------------------------------
+# find_related_memories
+# ------------------------------------------------------------------
+
+
+class TestFindRelatedMemories:
+    """Verify the substring-ranking search used by the dreamer."""
+
+    def _seed(self, manager: MemoryManager) -> None:
+        manager.write_memory(
+            _memory_id("chess-openings", hex3="aaa"),
+            "User prefers Queen's Gambit.",
+            kind="preference",
+            tags=["chess", "openings"],
+        )
+        manager.write_memory(
+            _memory_id("ping-pong", hex3="bbb"),
+            "User is learning ping pong and wants to read spin better.",
+            kind="skill",
+            tags=["ping-pong", "sports"],
+        )
+        manager.write_memory(
+            _memory_id("french", hex3="ccc"),
+            "User is French.",
+            kind="fact",
+            tags=["nationality", "france"],
+        )
+
+    def test_query_matches_body(self, manager: MemoryManager) -> None:
+        """A keyword found only in the body ranks that memory first."""
+        self._seed(manager)
+        results = manager.find_related_memories(query="queen")
+        assert results
+        assert results[0]["id"].startswith("2026-04-17_chess-openings_")
+
+    def test_score_prefers_more_hits(self, manager: MemoryManager) -> None:
+        """More substring matches → higher rank."""
+        self._seed(manager)
+        results = manager.find_related_memories(query="chess queen openings")
+        assert results[0]["id"].startswith("2026-04-17_chess-openings_")
+        assert results[0]["score"] >= 3
+
+    def test_tags_param_contributes(self, manager: MemoryManager) -> None:
+        """Passing ``tags=`` boosts memories matching those tags."""
+        self._seed(manager)
+        results = manager.find_related_memories(tags=["france"])
+        assert [r["id"] for r in results] == [_memory_id("french", hex3="ccc")]
+
+    def test_empty_inputs_return_empty(self, manager: MemoryManager) -> None:
+        """No query and no tags → no match."""
+        self._seed(manager)
+        assert manager.find_related_memories() == []
+
+    def test_hides_superseded(self, manager: MemoryManager) -> None:
+        """Superseded memories drop out of the results."""
+        old = _memory_id("old", hex3="111")
+        new = _memory_id("new", hex3="222")
+        manager.write_memory(old, "User prefers apples.", kind="preference", tags=["fruit"])
+        manager.write_memory(new, "User prefers oranges.", kind="preference", tags=["fruit"], supersedes=old)
+        manager.update_memory(old, frontmatter_updates={"superseded_by": new})
+        results = manager.find_related_memories(query="prefers")
+        assert [r["id"] for r in results] == [new]
+
+
+# ------------------------------------------------------------------
 # Log processed move
 # ------------------------------------------------------------------
 

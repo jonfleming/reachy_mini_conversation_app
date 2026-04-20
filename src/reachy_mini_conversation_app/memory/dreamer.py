@@ -160,8 +160,9 @@ DREAMER_TOOL_SPECS: list[dict[str, Any]] = [
         "name": "list_existing_memories",
         "description": (
             "List existing memory summaries on disk, optionally filtered by tag and/or kind. "
-            "Returns {id, summary, tags, kind, pinned, created}. Always call this BEFORE "
-            "creating a new memory so you don't duplicate."
+            "Returns {id, summary, tags, kind, pinned, created}. Use this when you want an "
+            "exhaustive tag- or kind-filtered view; for fuzzy discovery "
+            "`find_related_memories(query=...)` is usually cheaper."
         ),
         "parameters": {
             "type": "object",
@@ -170,6 +171,36 @@ DREAMER_TOOL_SPECS: list[dict[str, Any]] = [
                 "kind": {
                     "type": "string",
                     "enum": sorted(ALLOWED_KINDS),
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "type": "function",
+        "name": "find_related_memories",
+        "description": (
+            "Search existing memories by free-text query and/or tags. Case-insensitive "
+            "substring match over id, tags, kind, summary, and body. Ranked by descending "
+            "number of matches. Returns the same shape as list_existing_memories plus a "
+            "`score` field. Prefer this over repeated list_existing_memories(tag=...) calls "
+            "when you're checking whether a topic already has a memory."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Space-separated keywords. Each keyword matched independently.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of tags to search alongside the query.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of matches to return (default 10).",
                 },
             },
             "required": [],
@@ -497,6 +528,15 @@ class Dreamer:
         tag = args.get("tag") or None
         kind = args.get("kind") or None
         items = self.manager.list_memories(tag=tag, kind=kind)
+        return {"count": len(items), "memories": items}
+
+    def _tool_find_related_memories(
+        self, args: dict[str, Any], _: DreamLogStats
+    ) -> dict[str, Any]:
+        query = args.get("query") or ""
+        tags = args.get("tags") or None
+        limit = int(args.get("limit") or 10)
+        items = self.manager.find_related_memories(query=query, tags=tags, limit=limit)
         return {"count": len(items), "memories": items}
 
     def _tool_read_memory(self, args: dict[str, Any], _: DreamLogStats) -> dict[str, Any]:
