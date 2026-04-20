@@ -204,6 +204,32 @@ def run(
     if camera_worker:
         camera_worker.start()
 
+    # Blocking dream phase: consolidate pending logs before the conversation
+    # app accepts connections. Only runs when memory is enabled, there are
+    # actually pending logs, and a dreamer model is configured.
+    if memory_manager is not None:
+        dreamer_model = config.MEMORY_DREAMER_MODEL or config.OPENAI_MODEL_NAME
+        if not dreamer_model:
+            logger.warning("No dreamer model configured; skipping dream phase.")
+        else:
+            from reachy_mini_conversation_app.memory import run_dream_phase
+
+            if not config.MEMORY_DREAMER_MODEL:
+                logger.warning(
+                    "MEMORY_DREAMER_MODEL is unset; falling back to OPENAI_MODEL_NAME=%r. "
+                    "If that is a realtime-only alias, the dream phase will fail.",
+                    dreamer_model,
+                )
+            try:
+                run_dream_phase(
+                    memory_manager,
+                    model=dreamer_model,
+                    api_key=config.OPENAI_API_KEY,
+                    movement_manager=movement_manager,
+                )
+            except Exception as e:
+                logger.exception("Dream phase failed; continuing without consolidation: %s", e)
+
     def poll_stop_event() -> None:
         """Poll the stop event to allow graceful shutdown."""
         if app_stop_event is not None:

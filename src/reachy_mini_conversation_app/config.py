@@ -188,6 +188,11 @@ class Config:
     MEMORY_ENABLED: bool = _env_flag("REACHY_MINI_MEMORY_ENABLED", default=True)
     _data_dir_env = os.getenv("REACHY_MINI_DATA_DIRECTORY")
     DATA_DIRECTORY: Path = Path(_data_dir_env) if _data_dir_env else Path.home() / ".reachy_mini" / "data"
+    # Model used by the dreamer (offline memory consolidation). Falls back to
+    # OPENAI_MODEL_NAME — but OPENAI_MODEL_NAME is typically a realtime-only
+    # alias like "gpt-realtime", which won't work with the Responses API.
+    # Set this to a chat-capable model, e.g. "gpt-5.4".
+    MEMORY_DREAMER_MODEL: str | None = os.getenv("MEMORY_DREAMER_MODEL") or None
 
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")
 
