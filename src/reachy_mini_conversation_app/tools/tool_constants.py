@@ -15,5 +15,6 @@ class SystemTool(Enum):
 
     TASK_STATUS = "task_status"
     TASK_CANCEL = "task_cancel"
-    SAVE_MEMORY = "save_memory"
     RECALL_MEMORY = "recall_memory"
+    RECALL_TOPIC = "recall_topic"
+    SHORT_TERM_MEMORY = "short_term_memory"
