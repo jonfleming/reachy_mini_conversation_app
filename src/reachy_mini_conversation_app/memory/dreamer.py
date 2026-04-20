@@ -53,19 +53,31 @@ Each memory file has the following frontmatter:
 - created: ISO8601 UTC
 - sources: [log filenames the memory is drawn from]
 - kind: one of fact | preference | event | skill | relationship | goal | other
-- tags: lowercase ASCII tokens; first tag is the primary topic (drives index grouping)
+- tags: lowercase ASCII tokens; first tag is the primary topic (drives index grouping).
+  The primary tag should read as a topic (e.g. `chess`, `relationships`,
+  `idle-behavior`), not as a proper noun (`wife`) or a gerund (`vibing`).
 - related_to: memory IDs that MUST be read alongside this one; keep sparse
 - pinned: true only for identity/core facts (name, language, key relationships)
 - supersedes / superseded_by: explicit replacement links
 
-## Rules (follow all five)
+## Body shape
+
+- The **first line of the body** is a single-sentence TL;DR (≤ 20 words) that
+  stands alone. The index shows only this line, so it is the first thing the
+  live robot sees. Write it as the pitch for why this memory is worth reading.
+- Subsequent lines add detail: quotes, timestamps, relevant nuance.
+- Aim for a compressed synthesis — prefer fewer words over more — but do not
+  lose meaningful nuance. Emotional tone, uncertainty, or an open question
+  worth following up on later is all fair game to include.
+
+## Rules (follow all six)
 
 1. **Atomicity** — One memory = one `kind` + one primary topic. If your draft
    covers two, split it into two memories.
-2. **Overlap-first** — Before creating a new memory, call
-   `list_existing_memories(tag=X)` for each tag you're considering. Prefer
-   `update_memory` over `write_memory` when an existing memory covers the
-   same topic.
+2. **Overlap-first** — Before creating a new memory, probe existing ones with
+   `find_related_memories(query=...)` (preferred) or
+   `list_existing_memories(tag=...)`. Prefer `update_memory` over
+   `write_memory` when an existing memory covers the same topic.
 3. **Evidence** — You choose how to represent each fact. Direct quotes from
    the log are self-justifying. Paraphrase and compression are fine *provided
    you state (in your reasoning messages) which log lines back them*. Never
@@ -75,12 +87,22 @@ Each memory file has the following frontmatter:
    `superseded_by=<new_id>`. Never silently overwrite.
 5. **Pin** — Set `pinned: true` ONLY for identity/core facts. When in doubt,
    don't pin.
+6. **Utility** — Before you write, ask yourself: "Would a conversational
+   robot serve this user meaningfully better by knowing this fact?" If the
+   answer is probably not, do not write. Specifically, do NOT write memories
+   for:
+   - Transient conversational dynamics (mirroring, small-talk call-and-response,
+     mood of a single turn).
+   - Stray tokens that look like content but are likely transcription
+     artefacts (isolated foreign-language words, single-word utterances,
+     background speech).
 
 ## Workflow for each log
 
 1. Read the log with `read_log(filename)`.
-2. Check for overlap with `list_existing_memories(tag=...)` for any tag you
-   plan to use.
+2. Check for overlap with `find_related_memories(query=...)` — one call is
+   usually enough; fall back to `list_existing_memories(tag=...)` only if
+   you need a strictly tag-filtered view.
 3. For each distinct (kind, primary topic) you extract, either
    `write_memory(...)` or `update_memory(...)`.
 4. When you're finished with this log, respond with a plain-text summary of
@@ -102,8 +124,8 @@ Per-log statistics:
 Please reflect honestly on this run (short, specific, concrete):
 
 1. Were the available tools sufficient? Any task you wanted to do but couldn't?
-2. Did the five rules (atomicity, overlap-first, evidence, conflict, pin) fit
-   the material? Any rule that was ambiguous or missing?
+2. Did the six rules (atomicity, overlap-first, evidence, conflict, pin,
+   utility) fit the material? Any rule that was ambiguous or missing?
 3. Any tool call you repeated unnecessarily — a sign a helper tool is missing?
 4. One concrete improvement you'd suggest for the next run.
 
