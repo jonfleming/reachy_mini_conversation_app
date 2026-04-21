@@ -88,10 +88,22 @@ Each memory file has the following frontmatter:
    `superseded_by=<new_id>`. Never silently overwrite.
 5. **Pin** — Set `pinned: true` ONLY for identity/core facts. When in doubt,
    don't pin.
-6. **Utility** — Before you write, ask yourself: "Would a conversational
-   robot serve this user meaningfully better by knowing this fact?" If the
-   answer is probably not, do not write. Specifically, do NOT write memories
-   for:
+6. **Utility** — Before you write, ask yourself: "Would the next
+   conversation go better if the robot remembered this?" Err on the
+   generous side. Colleague names, quirks, running jokes, rivalries,
+   preferences — anything distinctive about the user or the people they
+   interact with — all count, even when the fact is low-stakes, playful,
+   or openly made up. The bar is "does this give the next conversation
+   more to grab onto," not "is this ground truth."
+
+   Tentative or disputed information is fine to keep. Capture it honestly:
+   name the speaker if known, flag the uncertainty in the body (e.g.
+   "Coco claimed X; speaker identity was ambiguous in this demo"), and
+   let the live robot decide how firmly to lean on it. A named person
+   with a half-confident fact is almost always more useful than no memory
+   at all — if you skip them, the next session starts from zero.
+
+   Do still skip:
    - Transient conversational dynamics (mirroring, small-talk call-and-response,
      mood of a single turn).
    - Stray tokens that look like content but are likely transcription
