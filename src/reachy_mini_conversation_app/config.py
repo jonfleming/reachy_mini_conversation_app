@@ -224,6 +224,8 @@ class Config:
     DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")  # Optional, enables the send_discord tool
     DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")  # Optional, enables the send_discord_dm tool
     DISCORD_USER_ID = os.getenv("DISCORD_USER_ID")  # Optional, Discord user ID that receives DMs
+    DISCORD_INBOUND_ENABLED = _env_flag("DISCORD_INBOUND_ENABLED", default=False)
+    DISCORD_INBOUND_POLL_SECONDS = float(os.getenv("DISCORD_INBOUND_POLL_SECONDS") or "10")
 
     logger.debug(
         "Backend provider: %s, Model: %s, HF_HOME: %s, Vision Model: %s",
@@ -319,6 +321,8 @@ def refresh_runtime_config_from_env() -> None:
     config.DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
     config.DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
     config.DISCORD_USER_ID = os.getenv("DISCORD_USER_ID")
+    config.DISCORD_INBOUND_ENABLED = _env_flag("DISCORD_INBOUND_ENABLED", default=False)
+    config.DISCORD_INBOUND_POLL_SECONDS = float(os.getenv("DISCORD_INBOUND_POLL_SECONDS") or "10")
 
 
 def get_backend_choice(model_name: str | None = None) -> str:

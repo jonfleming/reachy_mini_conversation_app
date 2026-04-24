@@ -6,16 +6,15 @@ import httpx
 from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 from reachy_mini_conversation_app.tools._discord_common import (
+    DISCORD_API_BASE,
     MAX_DISCORD_CONTENT_LEN,
     capture_jpeg,
+    bot_auth_header,
     post_discord_message,
 )
 
 
 logger = logging.getLogger(__name__)
-
-
-_DISCORD_API_BASE = "https://discord.com/api/v10"
 
 
 class SendDiscordDM(Tool):
@@ -69,13 +68,13 @@ class SendDiscordDM(Tool):
             jpeg_bytes is not None,
         )
 
-        headers = {"Authorization": f"Bot {bot_token}"}
+        headers = bot_auth_header(bot_token)
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 # Step 1: open/get DM channel (idempotent — returns existing if any).
                 dm_resp = await client.post(
-                    f"{_DISCORD_API_BASE}/users/@me/channels",
+                    f"{DISCORD_API_BASE}/users/@me/channels",
                     json={"recipient_id": user_id},
                     headers=headers,
                 )
@@ -90,7 +89,7 @@ class SendDiscordDM(Tool):
                 # Step 2: post the message into that DM channel.
                 msg_resp = await post_discord_message(
                     client,
-                    f"{_DISCORD_API_BASE}/channels/{channel_id}/messages",
+                    f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
                     message,
                     jpeg_bytes,
                     headers=headers,

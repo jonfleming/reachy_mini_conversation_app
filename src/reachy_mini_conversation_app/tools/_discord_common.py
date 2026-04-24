@@ -1,14 +1,25 @@
 """Shared helpers for the Discord tools (webhook channel post and bot DM)."""
 
+from __future__ import annotations
 import json
+from typing import TYPE_CHECKING
 
 import httpx
 
-from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.camera_frame_encoding import encode_bgr_frame_as_jpeg
 
 
+if TYPE_CHECKING:
+    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
+
+
 MAX_DISCORD_CONTENT_LEN = 2000
+DISCORD_API_BASE = "https://discord.com/api/v10"
+
+
+def bot_auth_header(token: str) -> dict[str, str]:
+    """Build the Authorization header for Discord bot API calls."""
+    return {"Authorization": f"Bot {token}"}
 
 
 def capture_jpeg(deps: ToolDependencies) -> tuple[bytes | None, str | None]:
