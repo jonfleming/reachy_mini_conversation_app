@@ -1,3 +1,4 @@
+import os
 import json
 import time
 import uuid
@@ -34,6 +35,7 @@ from reachy_mini_conversation_app.config import (
 )
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
+from reachy_mini_conversation_app.memory import DreamSummary, DreamScheduler, DEFAULT_DREAMER_MODEL
 from reachy_mini_conversation_app.tools.background_tool_manager import (
     ToolCallRoutine,
     ToolNotification,
@@ -42,6 +44,21 @@ from reachy_mini_conversation_app.tools.background_tool_manager import (
 
 
 logger = logging.getLogger(__name__)
+
+# Hidden context notes injected when the background dream starts/finishes, so the
+# robot can explain the chime if asked ("what was that sound?") without ever
+# bringing it up on its own. See docs/memory-background-dreaming-spec.md §5.
+DREAM_START_NOTE: Final[str] = (
+    "[Background event: a soft chime just played. Your memory-consolidation "
+    '"dreaming" process started in the background — you are quietly reprocessing '
+    "your recent conversations into long-term memory. Keep conversing normally; "
+    "do not mention this unless the user asks about the sound or your memory.]"
+)
+DREAM_FINISH_NOTE: Final[str] = (
+    "[Background event: a soft chime just played. Dreaming finished — your "
+    "memories are now up to date. Do not mention this unless the user asks "
+    "about the sound or your memory.]"
+)
 
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
@@ -149,6 +166,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         # Background tool manager
         self.tool_manager = BackgroundToolManager()
+
+        # Background memory consolidation ("dreaming"), launched per session.
+        self._dream_scheduler: DreamScheduler | None = None
 
         # Cost tracking
         self.cumulative_cost: float = 0.0
@@ -525,6 +545,98 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                 sent = True
 
+    # ------------------------------------------------------------------
+    # Background dreaming (hidden memory consolidation)
+    # ------------------------------------------------------------------
+
+    def _start_background_dreaming(self) -> None:
+        """Launch memory consolidation on a background thread for this session.
+
+        No-op when memory is disabled, no OpenAI key is configured, or there are
+        no pending logs. The dream runs in parallel with the conversation; a
+        subtle chime and a hidden context note mark its start and finish.
+        """
+        memory_manager = self.deps.memory_manager
+        if memory_manager is None:
+            return
+        api_key = config.OPENAI_API_KEY
+        if not api_key:
+            logger.info("[DREAM] No OpenAI API key configured; skipping background dreaming.")
+            return
+
+        model = config.MEMORY_DREAMER_MODEL or DEFAULT_DREAMER_MODEL
+        if not config.MEMORY_DREAMER_MODEL:
+            logger.info("[DREAM] MEMORY_DREAMER_MODEL unset; using default dreamer model %r.", model)
+
+        loop = asyncio.get_running_loop()
+
+        def on_start() -> None:
+            asyncio.run_coroutine_threadsafe(self._announce_dream_started(), loop)
+
+        def on_finish(summary: DreamSummary) -> None:
+            asyncio.run_coroutine_threadsafe(self._announce_dream_finished(summary), loop)
+
+        self._dream_scheduler = DreamScheduler(
+            memory_manager,
+            model=model,
+            api_key=api_key,
+            on_start=on_start,
+            on_finish=on_finish,
+        )
+        self._dream_scheduler.start()
+
+    async def _announce_dream_started(self) -> None:
+        """Play the start chime and tell the robot (silently) that it began dreaming."""
+        await self._play_dream_chime("dream_start.wav")
+        await self._inject_background_context(DREAM_START_NOTE)
+
+    async def _announce_dream_finished(self, summary: DreamSummary) -> None:
+        """Play the finish chime and tell the robot (silently) that dreaming is done."""
+        logger.info(
+            "[DREAM] Announcing dream finished: %d log(s), created %d, updated %d, errored=%s.",
+            summary.logs_processed,
+            summary.created,
+            summary.updated,
+            summary.errored,
+        )
+        await self._play_dream_chime("dream_end.wav")
+        await self._inject_background_context(DREAM_FINISH_NOTE)
+
+    async def _play_dream_chime(self, filename: str) -> None:
+        """Play a short chime via the robot speaker. Best-effort; never fatal."""
+        robot = getattr(self.deps, "reachy_mini", None)
+        media = getattr(robot, "media", None)
+        if media is None:
+            logger.debug("[DREAM] No media device available; skipping chime %s.", filename)
+            return
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds", filename)
+        try:
+            # play_sound blocks until the clip is queued/played, so offload it.
+            await asyncio.to_thread(media.play_sound, path)
+        except Exception:
+            logger.warning("[DREAM] Failed to play chime %s.", filename, exc_info=True)
+
+    async def _inject_background_context(self, text: str) -> None:
+        """Drop a hidden context note into the live conversation without forcing speech.
+
+        Mirrors ``send_idle_signal``'s item.create, but deliberately does NOT call
+        ``_safe_response_create`` afterwards — the note sits in context so the robot
+        can reference it if asked, but it never prompts the robot to speak.
+        """
+        if not self.connection:
+            logger.debug("[DREAM] No active connection; skipping context injection.")
+            return
+        try:
+            await self.connection.conversation.item.create(
+                item={
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            )
+        except self._connection_closed_errors():
+            logger.warning("[DREAM] Connection closed; could not inject dream context.")
+
     async def _handle_tool_result(self, bg_tool: ToolNotification) -> None:
         """Process the result of a tool call."""
         if bg_tool.error is not None:
@@ -699,6 +811,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             # Notify memory manager of new session
             if self.deps.memory_manager is not None:
                 self.deps.memory_manager.new_session()
+                # Consolidate previous sessions' logs in the background, in
+                # parallel with this conversation (was a blocking boot phase).
+                self._start_background_dreaming()
 
             response_sender_task: asyncio.Task[None] | None = None
             try:
