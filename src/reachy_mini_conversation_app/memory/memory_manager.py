@@ -101,6 +101,7 @@ class MemoryManager:
         self._session_log_header: str = ""
         self._ensure_dirs()
         self._migrate_legacy_layout()
+        self._ensure_index()
         self._start_session_log()
         logger.info("MemoryManager initialized: data_dir=%s", data_dir)
 
@@ -119,11 +120,16 @@ class MemoryManager:
             d.mkdir(parents=True, exist_ok=True)
 
     def _migrate_legacy_layout(self) -> None:
-        """One-shot fresh-start migration from the old two-tier layout.
+        """Idempotent fresh-start migration from the old two-tier layout.
 
         - Move any ``logs/*.log`` (old top-level logs) into ``logs/pending/``.
-        - Wipe the old ``active_memory.md`` so the first dream pass rebuilds it.
         - Remove any legacy ``archive/`` directory.
+
+        Note: this runs on every construction, so it must stay idempotent. It
+        deliberately does NOT touch ``active_memory.md`` — that file is the index
+        injected into the system prompt and must persist across restarts. (An
+        earlier version wiped it here on every init, which meant the summary was
+        never present in the prompt; see ``_ensure_index`` for the rebuild path.)
         """
         moved = 0
         for entry in self._logs_dir.iterdir():
@@ -137,14 +143,6 @@ class MemoryManager:
         if moved:
             logger.info("Migrated %d legacy log(s) to logs/pending/", moved)
 
-        if self._active_path.exists():
-            try:
-                # The index is always derived; wiping is safe.
-                self._active_path.unlink()
-                logger.info("Wiped legacy active_memory.md; will be rebuilt after next dream pass")
-            except OSError as e:
-                logger.warning("Failed to wipe legacy active_memory.md: %s", e)
-
         archive_dir = self._memory_dir / "archive"
         if archive_dir.exists():
             try:
@@ -152,6 +150,28 @@ class MemoryManager:
                 logger.info("Removed legacy archive/ directory")
             except OSError as e:
                 logger.warning("Failed to remove legacy archive/: %s", e)
+
+    def _ensure_index(self) -> None:
+        """Guarantee ``active_memory.md`` exists when there are memories to index.
+
+        The index is normally rebuilt at the end of each dream pass, but dreaming
+        only runs when there are pending logs. If the index is missing (fresh
+        install with copied memories, manual deletion, or a legacy upgrade) yet
+        memory files exist, rebuild it now from frontmatter — cheap, no LLM — so
+        the very next session still gets its summary injected into the prompt.
+        """
+        if self._active_path.exists():
+            return
+        if not any(self._memories_dir.glob("*.md")):
+            return
+        try:
+            # Local import avoids a module-load cycle (index_renderer is leaf-level).
+            from reachy_mini_conversation_app.memory.index_renderer import rebuild_index
+
+            rebuild_index(self)
+            logger.info("Rebuilt missing active_memory.md from existing memories.")
+        except Exception as e:
+            logger.warning("Failed to rebuild missing active_memory.md: %s", e)
 
     # ------------------------------------------------------------------
     # Session lifecycle

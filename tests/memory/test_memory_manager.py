@@ -81,15 +81,43 @@ class TestMigration:
         assert (pending / "2026-01-02_12-00.log").is_file()
         assert not (old_logs / "2026-01-01_10-00.log").exists()
 
-    def test_wipes_legacy_active_memory(self, data_dir: Path) -> None:
-        """Any pre-existing active_memory.md must be removed."""
+    def test_preserves_existing_active_memory(self, data_dir: Path) -> None:
+        """A pre-existing active_memory.md must survive construction (it's the prompt-injected index)."""
         mem_dir = data_dir / "memory"
         mem_dir.mkdir(parents=True)
-        (mem_dir / "active_memory.md").write_text("old fact (log.log)", encoding="utf-8")
+        index = mem_dir / "active_memory.md"
+        index.write_text("# Memory index\n\nsome content", encoding="utf-8")
 
         MemoryManager(data_dir)
 
-        assert not (mem_dir / "active_memory.md").exists()
+        assert index.exists()
+        assert index.read_text(encoding="utf-8") == "# Memory index\n\nsome content"
+
+    def test_rebuilds_missing_index_when_memories_exist(self, data_dir: Path) -> None:
+        """A missing index is rebuilt at init when memories exist, so injection needn't wait for a dream."""
+        memories_dir = data_dir / "memory" / "memories"
+        memories_dir.mkdir(parents=True)
+        (memories_dir / "2026-04-20_demo_a1b.md").write_text(
+            "---\n"
+            "id: 2026-04-20_demo_a1b\n"
+            "created: 2026-04-20T10:00:00Z\n"
+            "kind: fact\n"
+            "tags: [demo]\n"
+            "pinned: true\n"
+            "---\n\n"
+            "A demo memory.\n",
+            encoding="utf-8",
+        )
+
+        mgr = MemoryManager(data_dir)
+
+        assert mgr.active_memory_path.exists()
+        assert mgr.get_memory_block() != ""
+
+    def test_no_index_rebuild_without_memories(self, data_dir: Path) -> None:
+        """A fresh install with no memories must not fabricate an index."""
+        mgr = MemoryManager(data_dir)
+        assert not mgr.active_memory_path.exists()
 
     def test_removes_legacy_archive(self, data_dir: Path) -> None:
         """A legacy archive/ directory must be removed."""
