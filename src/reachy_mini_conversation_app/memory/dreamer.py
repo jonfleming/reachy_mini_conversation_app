@@ -1,12 +1,13 @@
 """Dreaming agent: offline memory consolidation.
 
-The dreamer runs as a blocking startup phase. It walks through every log in
-``logs/pending/``, calls an LLM with dedicated tools, and lets the LLM
-create/update/merge atomic memory files. After every log it rebuilds the
-index. At the end of the run it asks the LLM to reflect on its own work.
+The dreamer runs in the background during a conversation (on a daemon thread —
+see ``DreamScheduler``). It walks through every log in ``logs/pending/``, calls
+an LLM with dedicated tools, and lets the LLM create/update/merge atomic memory
+files. After every log it rebuilds the index. At the end of the run it asks the
+LLM to reflect on its own work.
 
 The conversation LLM never sees any of this — it simply inherits the
-curated memory state once the conversation app boots.
+curated memory state, refreshed between sessions.
 
 Every tool call, every LLM input/output, and every per-log statistic is
 printed to the terminal logger. See §7 of the spec for the expected
@@ -385,9 +386,9 @@ class Dreamer:
         dreamer = Dreamer(manager, model="gpt-5.4", api_key=OPENAI_API_KEY)
         dreamer.run()
 
-    The runner is sync because it is a blocking boot phase that must finish
-    before the conversation app accepts connections. Internally it uses
-    OpenAI's sync ``responses`` API, matching the s2s pipeline pattern.
+    The runner is sync and uses OpenAI's sync ``responses`` API, matching the
+    s2s pipeline pattern. It runs on a background thread during the conversation
+    (see ``DreamScheduler``), so the blocking calls never touch the event loop.
     """
 
     def __init__(
