@@ -559,6 +559,11 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         memory_manager = self.deps.memory_manager
         if memory_manager is None:
             return
+        # _run_realtime_session re-runs on every reconnect; don't launch a second
+        # dream over the same pending logs while the first is still going.
+        if self._dream_scheduler is not None and self._dream_scheduler.is_running():
+            logger.info("[DREAM] A dream from this session is still running; not starting another.")
+            return
         api_key = config.OPENAI_API_KEY
         if not api_key:
             logger.info("[DREAM] No OpenAI API key configured; skipping background dreaming.")
