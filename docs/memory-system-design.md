@@ -85,7 +85,7 @@ It is appended to the system prompt at session start by
 
 Both return the model-facing view: `created` stripped, `dates_discussed` added.
 
-## Dreaming
+## (Day) Dreaming
 
 Runs on a daemon thread per session [`DreamScheduler`], launched from
 `base_realtime.py` right after the session opens, so it never blocks startup. The
