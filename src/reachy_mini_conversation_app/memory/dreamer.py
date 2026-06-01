@@ -516,7 +516,7 @@ class Dreamer:
             try:
                 response = self.client.responses.create(
                     model=self.model,
-                    input=input_items,
+                    input=input_items,  # type: ignore[arg-type]
                     tools=DREAMER_TOOL_SPECS,  # type: ignore[arg-type]
                 )
             except Exception as e:
@@ -736,7 +736,7 @@ class Dreamer:
         if isinstance(item, dict):
             return dict(item)
         if hasattr(item, "model_dump"):
-            return item.model_dump()
+            return item.model_dump()  # type: ignore[no-any-return]
         if hasattr(item, "to_dict"):
             return item.to_dict()  # type: ignore[no-any-return]
         return dict(item)
