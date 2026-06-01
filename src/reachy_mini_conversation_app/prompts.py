@@ -3,7 +3,7 @@ import sys
 import logging
 from typing import Any
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config, get_default_voice_for_backend
 
@@ -17,14 +17,17 @@ VOICE_FILENAME = "voice.txt"
 
 
 def _current_date_line() -> str:
-    """One-line current-date anchor for the model, from the local system clock.
+    """One-line current-date anchor for the model, in UTC.
 
     LLMs don't reliably know today's date; this gives them an anchor so they can
     resolve "yesterday" / "a few weeks ago" into concrete dates for recall_memories.
+    UTC is used deliberately so it matches the memory system's clock: session logs
+    and memory event dates are all UTC (see memory/dates.py). [Caveat: in a non-UTC
+    timezone, near local midnight "today" can differ from the user's wall-clock day.]
     Best-effort: any failure degrades to "unknown" rather than crashing.
     """
     try:
-        return f"The current date is {datetime.now().strftime('%Y-%m-%d')}."
+        return f"The current date is {datetime.now(timezone.utc).strftime('%Y-%m-%d')} (UTC)."
     except Exception as e:  # pragma: no cover - clock failures are exceptional
         logger.warning("Could not read current date: %s", e)
         return "The current date is unknown."
