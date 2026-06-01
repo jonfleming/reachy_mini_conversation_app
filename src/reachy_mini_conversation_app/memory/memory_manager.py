@@ -20,7 +20,6 @@ import json
 import shutil
 import logging
 import tempfile
-import threading
 from typing import Any
 from pathlib import Path
 from datetime import datetime, timezone
@@ -89,7 +88,6 @@ class MemoryManager:
 
     def __init__(self, data_dir: Path) -> None:
         """Initialize memory under ``data_dir`` and run fresh-start migration."""
-        self._lock = threading.Lock()
         self._data_dir = data_dir
         self._memory_dir = data_dir / "memory"
         self._active_path = self._memory_dir / "active_memory.md"
