@@ -46,6 +46,12 @@ from reachy_mini_conversation_app.config import (
     get_available_voices_for_backend,
 )
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
+from reachy_mini_conversation_app.audio.latency_probe import (
+    POST_ASSISTANT_BEEP_ROLE,
+    POST_ASSISTANT_BEEP_CONTENT,
+    make_probe_beep,
+    recording_stats_enabled,
+)
 from reachy_mini_conversation_app.audio.startup_config import apply_audio_startup_config
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
 from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
@@ -135,6 +141,11 @@ class LocalStream:
         self._backend_error: str | None = None
         self._backend_retry_delay = BACKEND_RETRY_DELAY_SECONDS
         self._turn_first_playback_chunk_logged = False
+        self._record_probe_last_log_at = time.perf_counter()
+        self._record_probe_last_loop_at: float | None = None
+        self._record_probe_frames = 0
+        self._record_probe_max_loop_gap_ms = 0.0
+        self._record_probe_max_chunk_ms = 0.0
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -896,10 +907,47 @@ class LocalStream:
         logger.debug(f"Audio recording started at {input_sample_rate} Hz")
 
         while not self._stop_event.is_set():
+            loop_now = time.perf_counter()
+            if self._record_probe_last_loop_at is not None:
+                loop_gap_ms = (loop_now - self._record_probe_last_loop_at) * 1000
+                self._record_probe_max_loop_gap_ms = max(self._record_probe_max_loop_gap_ms, loop_gap_ms)
+            self._record_probe_last_loop_at = loop_now
+
             audio_frame = self._robot.media.get_audio_sample()
             if audio_frame is not None:
+                if recording_stats_enabled():
+                    self._record_probe_frames += 1
+                    chunk_ms = len(audio_frame) / input_sample_rate * 1000
+                    self._record_probe_max_chunk_ms = max(self._record_probe_max_chunk_ms, chunk_ms)
+                    log_after_s = 5.0
+                    if loop_now - self._record_probe_last_log_at >= log_after_s:
+                        logger.info(
+                            "Latency probe: record_loop frames=%s max_loop_gap=%.0f ms max_audio_chunk=%.0f ms",
+                            self._record_probe_frames,
+                            self._record_probe_max_loop_gap_ms,
+                            self._record_probe_max_chunk_ms,
+                        )
+                        self._record_probe_last_log_at = loop_now
+                        self._record_probe_frames = 0
+                        self._record_probe_max_loop_gap_ms = 0.0
+                        self._record_probe_max_chunk_ms = 0.0
                 await self.handler.receive((input_sample_rate, audio_frame))
             await asyncio.sleep(0)  # avoid busy loop
+
+    def _push_latency_probe_beep(self) -> None:
+        output_sample_rate = self._robot.media.get_output_audio_samplerate()
+        output_channels = self._robot.media.get_output_channels()
+        audio_frame = make_probe_beep(output_sample_rate, channels=output_channels)
+        playback_delay_s = _estimate_pending_playback_seconds(self._robot)
+        logger.info(
+            "Latency probe: pushing post-assistant beep "
+            "(chunk %.0f ms, player_rate=%s Hz, channels=%s, pending_player_audio=%.0f ms)",
+            len(audio_frame) / output_sample_rate * 1000,
+            output_sample_rate,
+            output_channels,
+            playback_delay_s * 1000,
+        )
+        self._robot.media.push_audio_sample(audio_frame)
 
     async def play_loop(self) -> None:
         """Fetch outputs from the handler: log text and play audio frames."""
@@ -914,6 +962,12 @@ class LocalStream:
                 for msg in handler_output.args:
                     if msg.get("role") == "user":
                         self._turn_first_playback_chunk_logged = False
+                    if (
+                        msg.get("role") == POST_ASSISTANT_BEEP_ROLE
+                        and msg.get("content") == POST_ASSISTANT_BEEP_CONTENT
+                    ):
+                        self._push_latency_probe_beep()
+                        continue
                     content = msg.get("content", "")
                     if isinstance(content, str):
                         logger.info(

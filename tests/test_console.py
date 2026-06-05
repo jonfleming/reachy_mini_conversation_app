@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 from fastapi import FastAPI
+from fastrtc import AdditionalOutputs
 from fastapi.testclient import TestClient
 
 from reachy_mini.media.media_manager import MediaBackend
@@ -21,6 +22,7 @@ from reachy_mini_conversation_app.startup_settings import (
     StartupSettings,
     load_startup_settings_into_runtime,
 )
+from reachy_mini_conversation_app.audio.latency_probe import POST_ASSISTANT_BEEP_ROLE, POST_ASSISTANT_BEEP_CONTENT
 from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
 
 
@@ -131,6 +133,59 @@ async def test_play_loop_logs_first_robot_playback_chunk_delay(caplog: pytest.Lo
         and "pending_player_audio=1000 ms" in record.getMessage()
         for record in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_play_loop_pushes_latency_probe_beep(caplog: pytest.LogCaptureFixture) -> None:
+    """Latency probe markers should push an audible beep through the normal robot player path."""
+    caplog.set_level(logging.INFO, logger="reachy_mini_conversation_app.console")
+
+    class Handler:
+        def __init__(self) -> None:
+            self.output_queue: asyncio.Queue[Any] = asyncio.Queue()
+            self._emitted = False
+
+        async def emit(self) -> AdditionalOutputs | None:
+            if not self._emitted:
+                self._emitted = True
+                return AdditionalOutputs(
+                    {
+                        "role": POST_ASSISTANT_BEEP_ROLE,
+                        "content": POST_ASSISTANT_BEEP_CONTENT,
+                    }
+                )
+            return None
+
+    audio = SimpleNamespace(
+        _playback_next_pts_ns=1_500_000_000,
+        _get_playback_running_time_ns=lambda: 500_000_000,
+    )
+    media = SimpleNamespace(
+        audio=audio,
+        backend=LOCAL_PLAYER_BACKEND,
+        get_output_audio_samplerate=lambda: 16000,
+        get_output_channels=lambda: 2,
+        push_audio_sample=MagicMock(),
+    )
+    robot = SimpleNamespace(media=media)
+    stream = LocalStream(Handler(), robot)
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.01)
+        stream._stop_event.set()
+
+    stopper = asyncio.create_task(stop_soon())
+    try:
+        await asyncio.wait_for(stream.play_loop(), timeout=1.0)
+    finally:
+        await stopper
+
+    media.push_audio_sample.assert_called_once()
+    pushed_audio = media.push_audio_sample.call_args.args[0]
+    assert pushed_audio.dtype == np.float32
+    assert pushed_audio.ndim == 2
+    assert pushed_audio.shape[1] == 2
+    assert any("Latency probe: pushing post-assistant beep" in record.getMessage() for record in caplog.records)
 
 
 def test_backend_config_persists_gemini_selection_and_status(

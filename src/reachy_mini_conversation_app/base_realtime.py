@@ -33,6 +33,11 @@ from reachy_mini_conversation_app.config import (
 )
 from reachy_mini_conversation_app.idle_policy import start_idle_tool_call
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
+from reachy_mini_conversation_app.audio.latency_probe import (
+    POST_ASSISTANT_BEEP_ROLE,
+    POST_ASSISTANT_BEEP_CONTENT,
+    post_assistant_beep_enabled,
+)
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
 from reachy_mini_conversation_app.tools.background_tool_manager import (
     ToolCallRoutine,
@@ -743,6 +748,16 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         logger.debug("User speech stopped - server will auto-commit with VAD")
 
                     if event.type == "response.output_audio.done":
+                        if not self.gradio_mode and post_assistant_beep_enabled():
+                            logger.info("Latency probe: queueing post-assistant beep")
+                            await self.output_queue.put(
+                                AdditionalOutputs(
+                                    {
+                                        "role": POST_ASSISTANT_BEEP_ROLE,
+                                        "content": POST_ASSISTANT_BEEP_CONTENT,
+                                    }
+                                )
+                            )
                         logger.debug("response completed")
 
                     if event.type == "response.created":

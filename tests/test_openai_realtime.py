@@ -17,6 +17,11 @@ import reachy_mini_conversation_app.tools.background_tool_manager as btm_mod
 from reachy_mini_conversation_app.config import OPENAI_BACKEND, config, get_default_voice_for_backend
 from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
+from reachy_mini_conversation_app.audio.latency_probe import (
+    POST_ASSISTANT_BEEP_ENV,
+    POST_ASSISTANT_BEEP_ROLE,
+    POST_ASSISTANT_BEEP_CONTENT,
+)
 from reachy_mini_conversation_app.tools.tool_constants import ToolState
 from reachy_mini_conversation_app.tools.background_tool_manager import ToolCallRoutine, ToolNotification
 
@@ -380,6 +385,35 @@ async def test_realtime_logs_backend_latency_breakdown(monkeypatch: Any, caplog:
     assert any(
         "Backend latency: first audio delta" in message and "after speech_stopped" in message for message in messages
     )
+
+
+@pytest.mark.asyncio
+async def test_realtime_queues_latency_probe_beep_marker(monkeypatch: Any) -> None:
+    """Assistant audio completion should queue a latency probe marker when enabled."""
+    monkeypatch.setenv(POST_ASSISTANT_BEEP_ENV, "1")
+
+    handler = await _run_openai_handler_with_events(
+        monkeypatch,
+        [
+            SimpleNamespace(type="response.output_audio.done"),
+        ],
+    )
+
+    queued_outputs = []
+    while not handler.output_queue.empty():
+        queued_outputs.append(handler.output_queue.get_nowait())
+
+    queued_messages = [
+        message
+        for output in queued_outputs
+        if isinstance(output, AdditionalOutputs)
+        for message in output.args
+        if isinstance(message, dict)
+    ]
+    assert {
+        "role": POST_ASSISTANT_BEEP_ROLE,
+        "content": POST_ASSISTANT_BEEP_CONTENT,
+    } in queued_messages
 
 
 @pytest.mark.asyncio
