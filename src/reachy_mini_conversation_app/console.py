@@ -49,9 +49,11 @@ from reachy_mini_conversation_app.startup_settings import read_startup_settings,
 from reachy_mini_conversation_app.audio.latency_probe import (
     POST_ASSISTANT_BEEP_ROLE,
     POST_ASSISTANT_BEEP_GAP_S,
+    AUDIBLE_AUDIO_RMS_THRESHOLD,
     POST_ASSISTANT_BEEP_CONTENT,
     make_probe_beep,
     probe_beep_score,
+    normalized_audio_rms,
     is_probe_beep_detected,
     recording_stats_enabled,
 )
@@ -158,6 +160,9 @@ class LocalStream:
         self._assistant_playback_audio_ms = 0.0
         self._assistant_playback_first_push_at: float | None = None
         self._assistant_playback_last_push_at: float | None = None
+        self._assistant_playback_first_audible_logged = False
+        self._assistant_playback_before_audible_ms = 0.0
+        self._assistant_playback_max_rms = 0.0
         self._probe_beep_generation = 0
         self._probe_beep_gap_s = POST_ASSISTANT_BEEP_GAP_S
         self._install_handler(handler)
@@ -849,6 +854,7 @@ class LocalStream:
                 asyncio.create_task(self._run_handler_startup_loop(), name="realtime-handler"),
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
                 asyncio.create_task(self.play_loop(), name="stream-play-loop"),
+                asyncio.create_task(self._event_loop_lag_probe(), name="latency-event-loop-lag-probe"),
             ]
             try:
                 await asyncio.gather(*self._tasks)
@@ -923,6 +929,9 @@ class LocalStream:
         self._assistant_playback_audio_ms = 0.0
         self._assistant_playback_first_push_at = None
         self._assistant_playback_last_push_at = None
+        self._assistant_playback_first_audible_logged = False
+        self._assistant_playback_before_audible_ms = 0.0
+        self._assistant_playback_max_rms = 0.0
 
     def _clear_probe_beep_detection(self) -> None:
         self._probe_beep_pushed_at = None
@@ -975,6 +984,36 @@ class LocalStream:
         estimated_remaining_s = max(0.0, assistant_audio_s - elapsed_playback_s)
         estimated_remaining_s = max(estimated_remaining_s, playback_delay_s)
         return estimated_remaining_s + self._probe_beep_gap_s, estimated_remaining_s
+
+    async def _event_loop_lag_probe(self) -> None:
+        interval_s = 0.25
+        log_after_s = 5.0
+        warn_lag_ms = 100.0
+        expected_at = time.perf_counter() + interval_s
+        last_log_at = time.perf_counter()
+        max_lag_ms = 0.0
+        samples = 0
+
+        while not self._stop_event.is_set():
+            await asyncio.sleep(interval_s)
+            now = time.perf_counter()
+            lag_ms = max(0.0, (now - expected_at) * 1000)
+            max_lag_ms = max(max_lag_ms, lag_ms)
+            samples += 1
+
+            if now - last_log_at >= log_after_s:
+                if recording_stats_enabled() or max_lag_ms >= warn_lag_ms:
+                    logger.info(
+                        "Latency probe: event_loop window %.0f s: samples=%s max_lag=%.0f ms",
+                        log_after_s,
+                        samples,
+                        max_lag_ms,
+                    )
+                last_log_at = now
+                max_lag_ms = 0.0
+                samples = 0
+
+            expected_at = now + interval_s
 
     async def record_loop(self) -> None:
         """Read mic frames from the recorder and forward them to the handler."""
@@ -1138,9 +1177,11 @@ class LocalStream:
                         num_samples,
                     )
 
+                chunk_duration_ms = len(audio_frame) / output_sample_rate * 1000
+                chunk_rms = normalized_audio_rms(audio_frame)
+                self._assistant_playback_max_rms = max(self._assistant_playback_max_rms, chunk_rms)
                 playback_delay_s = _estimate_pending_playback_seconds(self._robot)
                 if not self._turn_first_playback_chunk_logged:
-                    chunk_duration_ms = len(audio_frame) / output_sample_rate * 1000
                     logger.info(
                         "Playback latency: first audio chunk pushed to robot player "
                         "(chunk %.0f ms, backend_rate=%s Hz, player_rate=%s Hz, pending_player_audio=%.0f ms)",
@@ -1152,9 +1193,25 @@ class LocalStream:
                     self._turn_first_playback_chunk_logged = True
 
                 pushed_at = time.perf_counter()
+                if not self._assistant_playback_first_audible_logged:
+                    if chunk_rms >= AUDIBLE_AUDIO_RMS_THRESHOLD:
+                        after_first_chunk_ms = 0.0
+                        if self._assistant_playback_first_push_at is not None:
+                            after_first_chunk_ms = (pushed_at - self._assistant_playback_first_push_at) * 1000
+                        logger.info(
+                            "Playback latency: first audible audio chunk pushed "
+                            "(after_first_chunk=%.0f ms, leading_silence=%.0f ms, rms=%.4f, threshold=%.4f)",
+                            after_first_chunk_ms,
+                            self._assistant_playback_before_audible_ms,
+                            chunk_rms,
+                            AUDIBLE_AUDIO_RMS_THRESHOLD,
+                        )
+                        self._assistant_playback_first_audible_logged = True
+                    else:
+                        self._assistant_playback_before_audible_ms += chunk_duration_ms
                 self._robot.media.push_audio_sample(audio_frame)
                 self._assistant_playback_chunks += 1
-                self._assistant_playback_audio_ms += len(audio_frame) / output_sample_rate * 1000
+                self._assistant_playback_audio_ms += chunk_duration_ms
                 if self._assistant_playback_first_push_at is None:
                     self._assistant_playback_first_push_at = pushed_at
                 self._assistant_playback_last_push_at = pushed_at

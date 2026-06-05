@@ -1,10 +1,13 @@
+import os
 import json
 import time
 import uuid
 import base64
 import random
+import shutil
 import asyncio
 import logging
+import subprocess
 from abc import ABC, abstractmethod
 from typing import Any, Final, Tuple, ClassVar, Optional
 from datetime import datetime
@@ -35,7 +38,10 @@ from reachy_mini_conversation_app.idle_policy import start_idle_tool_call
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.audio.latency_probe import (
     POST_ASSISTANT_BEEP_ROLE,
+    AUDIBLE_AUDIO_RMS_THRESHOLD,
     POST_ASSISTANT_BEEP_CONTENT,
+    SLOW_FIRST_AUDIBLE_AUDIO_MS,
+    normalized_audio_rms,
     post_assistant_beep_enabled,
 )
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
@@ -50,6 +56,55 @@ logger = logging.getLogger(__name__)
 
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
+
+
+def _read_sysfs_text(path: str) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def _system_snapshot() -> str:
+    """Best-effort one-line system snapshot for slow-turn debug logs."""
+    parts: list[str] = []
+    try:
+        load1, load5, load15 = os.getloadavg()
+        parts.append(f"load={load1:.2f}/{load5:.2f}/{load15:.2f}")
+    except OSError:
+        pass
+
+    temp_raw = _read_sysfs_text("/sys/class/thermal/thermal_zone0/temp")
+    if temp_raw:
+        try:
+            parts.append(f"temp={float(temp_raw) / 1000:.1f}C")
+        except ValueError:
+            parts.append(f"temp={temp_raw}")
+
+    freq_raw = _read_sysfs_text("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+    if freq_raw:
+        try:
+            parts.append(f"cpu_freq={float(freq_raw) / 1000:.0f}MHz")
+        except ValueError:
+            parts.append(f"cpu_freq={freq_raw}")
+
+    if shutil.which("vcgencmd"):
+        try:
+            result = subprocess.run(
+                ["vcgencmd", "get_throttled"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.3,
+            )
+            throttled = result.stdout.strip()
+            if throttled:
+                parts.append(throttled)
+        except Exception:
+            pass
+
+    return " ".join(parts) if parts else "unavailable"
 
 
 class InputTranscriptChunksByItem(BaseModel):
@@ -171,6 +226,14 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_user_done_at: float | None = None
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
+        self._turn_first_audible_audio_at: float | None = None
+        self._turn_audio_started_at: float | None = None
+        self._turn_audio_last_chunk_at: float | None = None
+        self._turn_audio_chunks = 0
+        self._turn_audio_ms = 0.0
+        self._turn_audio_before_audible_ms = 0.0
+        self._turn_audio_max_rms = 0.0
+        self._turn_slow_snapshot_logged = False
 
     @staticmethod
     def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
@@ -217,6 +280,88 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
     def _response_done_timeout(self) -> float:
         """Return the response completion timeout."""
         return _RESPONSE_DONE_TIMEOUT
+
+    def _reset_turn_audio_probe(self) -> None:
+        self._turn_first_audio_at = None
+        self._turn_first_audible_audio_at = None
+        self._turn_audio_started_at = None
+        self._turn_audio_last_chunk_at = None
+        self._turn_audio_chunks = 0
+        self._turn_audio_ms = 0.0
+        self._turn_audio_before_audible_ms = 0.0
+        self._turn_audio_max_rms = 0.0
+        self._turn_slow_snapshot_logged = False
+
+    def _log_first_audible_audio(self, now: float, *, rms: float) -> None:
+        self._turn_first_audible_audio_at = now
+        if self._turn_user_done_at is None:
+            logger.info(
+                "Backend latency: first audible audio detected (leading_silence=%.0f ms, rms=%.4f, threshold=%.4f)",
+                self._turn_audio_before_audible_ms,
+                rms,
+                AUDIBLE_AUDIO_RMS_THRESHOLD,
+            )
+            return
+
+        delta_ms = (now - self._turn_user_done_at) * 1000
+        if self._turn_speech_stopped_at is not None:
+            stopped_delta_ms = (now - self._turn_speech_stopped_at) * 1000
+            logger.info(
+                "Backend latency: first audible audio %.0f ms after user transcript "
+                "(%.0f ms after speech_stopped; leading_silence=%.0f ms, rms=%.4f, threshold=%.4f)",
+                delta_ms,
+                stopped_delta_ms,
+                self._turn_audio_before_audible_ms,
+                rms,
+                AUDIBLE_AUDIO_RMS_THRESHOLD,
+            )
+        else:
+            logger.info(
+                "Backend latency: first audible audio %.0f ms after user transcript "
+                "(leading_silence=%.0f ms, rms=%.4f, threshold=%.4f)",
+                delta_ms,
+                self._turn_audio_before_audible_ms,
+                rms,
+                AUDIBLE_AUDIO_RMS_THRESHOLD,
+            )
+
+        if delta_ms >= SLOW_FIRST_AUDIBLE_AUDIO_MS and not self._turn_slow_snapshot_logged:
+            self._turn_slow_snapshot_logged = True
+            logger.info(
+                "Latency probe: slow first audible audio snapshot "
+                "(first_audible=%.0f ms, response_created=%s, system=%s)",
+                delta_ms,
+                (
+                    f"{(self._turn_response_created_at - self._turn_user_done_at) * 1000:.0f} ms"
+                    if self._turn_response_created_at is not None
+                    else "unknown"
+                ),
+                _system_snapshot(),
+            )
+
+    def _log_turn_audio_summary(self) -> None:
+        if self._turn_audio_chunks == 0:
+            return
+
+        stream_span_ms = 0.0
+        if self._turn_audio_started_at is not None and self._turn_audio_last_chunk_at is not None:
+            stream_span_ms = (self._turn_audio_last_chunk_at - self._turn_audio_started_at) * 1000
+
+        first_audible = "not_detected"
+        if self._turn_first_audible_audio_at is not None and self._turn_user_done_at is not None:
+            first_audible = f"{(self._turn_first_audible_audio_at - self._turn_user_done_at) * 1000:.0f} ms"
+
+        logger.info(
+            "Assistant audio summary: chunks=%s audio=%.0f ms stream_span=%.0f ms "
+            "max_rms=%.4f first_audible=%s leading_silence=%.0f ms threshold=%.4f",
+            self._turn_audio_chunks,
+            self._turn_audio_ms,
+            stream_span_ms,
+            self._turn_audio_max_rms,
+            first_audible,
+            self._turn_audio_before_audible_ms,
+            AUDIBLE_AUDIO_RMS_THRESHOLD,
+        )
 
     def _connection_closed_errors(self) -> tuple[type[BaseException], ...]:
         """Return websocket closure exceptions handled as reconnectable/ignorable."""
@@ -730,7 +875,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         self._turn_speech_stopped_at = None
                         self._turn_user_done_at = None
                         self._turn_response_created_at = None
-                        self._turn_first_audio_at = None
+                        self._reset_turn_audio_probe()
                         if self._clear_queue:
                             self._clear_queue()
                         self.deps.movement_manager.set_listening(True)
@@ -748,6 +893,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         logger.debug("User speech stopped - server will auto-commit with VAD")
 
                     if event.type == "response.output_audio.done":
+                        self._log_turn_audio_summary()
                         if not self.gradio_mode and post_assistant_beep_enabled():
                             logger.info("Latency probe: queueing post-assistant beep")
                             await self.output_queue.put(
@@ -822,7 +968,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                         self._turn_user_done_at = time.perf_counter()
                         self._turn_response_created_at = None
-                        self._turn_first_audio_at = None
+                        self._reset_turn_audio_probe()
                         if self._turn_speech_stopped_at is not None:
                             delta_ms = (self._turn_user_done_at - self._turn_speech_stopped_at) * 1000
                             logger.info(
@@ -853,11 +999,19 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         if self.gradio_mode:
                             self._tap_audio_for_daemon_wobbler(decoded_pcm)
                         self._mark_activity("assistant_audio_delta")
+                        audio_now = time.perf_counter()
+                        chunk_samples = decoded_pcm.shape[-1]
+                        chunk_ms = chunk_samples / self.output_sample_rate * 1000
+                        chunk_rms = normalized_audio_rms(decoded_pcm)
+                        if self._turn_audio_chunks == 0:
+                            self._turn_audio_started_at = audio_now
+                        self._turn_audio_last_chunk_at = audio_now
+                        self._turn_audio_chunks += 1
+                        self._turn_audio_ms += chunk_ms
+                        self._turn_audio_max_rms = max(self._turn_audio_max_rms, chunk_rms)
                         if self._turn_user_done_at is not None and self._turn_first_audio_at is None:
-                            self._turn_first_audio_at = time.perf_counter()
+                            self._turn_first_audio_at = audio_now
                             delta_ms = (self._turn_first_audio_at - self._turn_user_done_at) * 1000
-                            chunk_samples = decoded_pcm.shape[-1]
-                            chunk_ms = chunk_samples / self.output_sample_rate * 1000
                             if self._turn_speech_stopped_at is not None:
                                 stopped_delta_ms = (self._turn_first_audio_at - self._turn_speech_stopped_at) * 1000
                                 logger.info(
@@ -876,6 +1030,11 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                                     chunk_ms,
                                     self.output_sample_rate,
                                 )
+                        if self._turn_first_audible_audio_at is None:
+                            if chunk_rms >= AUDIBLE_AUDIO_RMS_THRESHOLD:
+                                self._log_first_audible_audio(audio_now, rms=chunk_rms)
+                            else:
+                                self._turn_audio_before_audible_ms += chunk_ms
                         await self.output_queue.put(
                             (
                                 self.output_sample_rate,

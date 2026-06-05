@@ -15,6 +15,8 @@ PROBE_BEEP_FREQUENCY_HZ = 1000.0
 PROBE_BEEP_DETECTION_MIN_RMS = 0.01
 PROBE_BEEP_DETECTION_MIN_SCORE = 0.65
 POST_ASSISTANT_BEEP_GAP_S = 0.35
+AUDIBLE_AUDIO_RMS_THRESHOLD = 0.006
+SLOW_FIRST_AUDIBLE_AUDIO_MS = 2500.0
 
 
 def _env_flag(name: str) -> bool:
@@ -30,6 +32,23 @@ def post_assistant_beep_enabled() -> bool:
 def recording_stats_enabled() -> bool:
     """Return whether to log record-loop timing diagnostics."""
     return _env_flag(RECORDING_STATS_ENV)
+
+
+def normalized_audio_rms(audio_frame: NDArray[np.generic]) -> float:
+    """Return an approximate normalized RMS for int or float audio."""
+    audio = np.asarray(audio_frame)
+    if audio.size == 0:
+        return 0.0
+    if audio.ndim > 1:
+        audio = audio.astype(np.float32).mean(axis=0 if audio.shape[0] < audio.shape[-1] else 1)
+    else:
+        audio = audio.astype(np.float32)
+    if np.issubdtype(np.asarray(audio_frame).dtype, np.integer):
+        audio = audio / float(np.iinfo(np.asarray(audio_frame).dtype).max)
+    audio = audio.reshape(-1)
+    if audio.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(audio * audio)))
 
 
 def probe_beep_score(audio_frame: NDArray[np.float32], sample_rate: int) -> tuple[float, float]:
