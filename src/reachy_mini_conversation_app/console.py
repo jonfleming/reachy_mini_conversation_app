@@ -50,6 +50,8 @@ from reachy_mini_conversation_app.audio.latency_probe import (
     POST_ASSISTANT_BEEP_ROLE,
     POST_ASSISTANT_BEEP_CONTENT,
     make_probe_beep,
+    probe_beep_score,
+    is_probe_beep_detected,
     recording_stats_enabled,
 )
 from reachy_mini_conversation_app.audio.startup_config import apply_audio_startup_config
@@ -146,6 +148,15 @@ class LocalStream:
         self._record_probe_frames = 0
         self._record_probe_max_loop_gap_ms = 0.0
         self._record_probe_max_chunk_ms = 0.0
+        self._record_probe_audio_ms = 0.0
+        self._probe_beep_pushed_at: float | None = None
+        self._probe_beep_detect_until_at: float | None = None
+        self._probe_beep_best_score = 0.0
+        self._probe_beep_best_rms = 0.0
+        self._assistant_playback_chunks = 0
+        self._assistant_playback_audio_ms = 0.0
+        self._assistant_playback_first_push_at: float | None = None
+        self._assistant_playback_last_push_at: float | None = None
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -900,6 +911,56 @@ class LocalStream:
             elif hasattr(audio, "clear_player") and callable(audio.clear_player):
                 audio.clear_player()
         self.handler.output_queue = asyncio.Queue()
+        self._reset_assistant_playback_stats()
+        self._clear_probe_beep_detection()
+
+    def _reset_assistant_playback_stats(self) -> None:
+        self._assistant_playback_chunks = 0
+        self._assistant_playback_audio_ms = 0.0
+        self._assistant_playback_first_push_at = None
+        self._assistant_playback_last_push_at = None
+
+    def _clear_probe_beep_detection(self) -> None:
+        self._probe_beep_pushed_at = None
+        self._probe_beep_detect_until_at = None
+        self._probe_beep_best_score = 0.0
+        self._probe_beep_best_rms = 0.0
+
+    def _check_latency_probe_beep_detection(
+        self,
+        audio_frame: object | None,
+        input_sample_rate: int,
+        *,
+        now: float,
+    ) -> None:
+        pushed_at = self._probe_beep_pushed_at
+        detect_until_at = self._probe_beep_detect_until_at
+        if pushed_at is None or detect_until_at is None:
+            return
+
+        if audio_frame is not None:
+            score, rms = probe_beep_score(audio_frame, input_sample_rate)
+            self._probe_beep_best_score = max(self._probe_beep_best_score, score)
+            self._probe_beep_best_rms = max(self._probe_beep_best_rms, rms)
+            if is_probe_beep_detected(score, rms):
+                logger.info(
+                    "Latency probe: post-assistant beep detected by recorder %.0f ms after push (score=%.2f rms=%.3f)",
+                    (now - pushed_at) * 1000,
+                    score,
+                    rms,
+                )
+                self._clear_probe_beep_detection()
+                return
+
+        if now >= detect_until_at:
+            logger.info(
+                "Latency probe: post-assistant beep not detected by recorder within %.0f ms "
+                "(best_score=%.2f best_rms=%.3f)",
+                (detect_until_at - pushed_at) * 1000,
+                self._probe_beep_best_score,
+                self._probe_beep_best_rms,
+            )
+            self._clear_probe_beep_detection()
 
     async def record_loop(self) -> None:
         """Read mic frames from the recorder and forward them to the handler."""
@@ -914,21 +975,28 @@ class LocalStream:
             self._record_probe_last_loop_at = loop_now
 
             audio_frame = self._robot.media.get_audio_sample()
+            sample_now = time.perf_counter()
+            self._check_latency_probe_beep_detection(audio_frame, input_sample_rate, now=sample_now)
             if audio_frame is not None:
+                chunk_ms = len(audio_frame) / input_sample_rate * 1000
                 if recording_stats_enabled():
                     self._record_probe_frames += 1
-                    chunk_ms = len(audio_frame) / input_sample_rate * 1000
+                    self._record_probe_audio_ms += chunk_ms
                     self._record_probe_max_chunk_ms = max(self._record_probe_max_chunk_ms, chunk_ms)
                     log_after_s = 5.0
-                    if loop_now - self._record_probe_last_log_at >= log_after_s:
+                    if sample_now - self._record_probe_last_log_at >= log_after_s:
                         logger.info(
-                            "Latency probe: record_loop frames=%s max_loop_gap=%.0f ms max_audio_chunk=%.0f ms",
+                            "Latency probe: recorder window %.0f s: frames=%s audio=%.0f ms "
+                            "max_loop_gap=%.0f ms max_audio_chunk=%.0f ms",
+                            log_after_s,
                             self._record_probe_frames,
+                            self._record_probe_audio_ms,
                             self._record_probe_max_loop_gap_ms,
                             self._record_probe_max_chunk_ms,
                         )
-                        self._record_probe_last_log_at = loop_now
+                        self._record_probe_last_log_at = sample_now
                         self._record_probe_frames = 0
+                        self._record_probe_audio_ms = 0.0
                         self._record_probe_max_loop_gap_ms = 0.0
                         self._record_probe_max_chunk_ms = 0.0
                 await self.handler.receive((input_sample_rate, audio_frame))
@@ -939,6 +1007,20 @@ class LocalStream:
         output_channels = self._robot.media.get_output_channels()
         audio_frame = make_probe_beep(output_sample_rate, channels=output_channels)
         playback_delay_s = _estimate_pending_playback_seconds(self._robot)
+        pushed_at = time.perf_counter()
+        if self._assistant_playback_chunks > 0:
+            first_push_at = self._assistant_playback_first_push_at or pushed_at
+            last_push_at = self._assistant_playback_last_push_at or pushed_at
+            logger.info(
+                "Latency probe: assistant audio handed to player before beep "
+                "(chunks=%s, queued_audio=%.0f ms, push_span=%.0f ms, since_last_chunk=%.0f ms)",
+                self._assistant_playback_chunks,
+                self._assistant_playback_audio_ms,
+                (last_push_at - first_push_at) * 1000,
+                (pushed_at - last_push_at) * 1000,
+            )
+        else:
+            logger.info("Latency probe: no assistant audio chunks tracked before post-assistant beep")
         logger.info(
             "Latency probe: pushing post-assistant beep "
             "(chunk %.0f ms, player_rate=%s Hz, channels=%s, pending_player_audio=%.0f ms)",
@@ -947,6 +1029,10 @@ class LocalStream:
             output_channels,
             playback_delay_s * 1000,
         )
+        self._probe_beep_pushed_at = pushed_at
+        self._probe_beep_detect_until_at = pushed_at + 4.0
+        self._probe_beep_best_score = 0.0
+        self._probe_beep_best_rms = 0.0
         self._robot.media.push_audio_sample(audio_frame)
 
     async def play_loop(self) -> None:
@@ -962,6 +1048,7 @@ class LocalStream:
                 for msg in handler_output.args:
                     if msg.get("role") == "user":
                         self._turn_first_playback_chunk_logged = False
+                        self._reset_assistant_playback_stats()
                     if (
                         msg.get("role") == POST_ASSISTANT_BEEP_ROLE
                         and msg.get("content") == POST_ASSISTANT_BEEP_CONTENT
@@ -1019,7 +1106,13 @@ class LocalStream:
                     )
                     self._turn_first_playback_chunk_logged = True
 
+                pushed_at = time.perf_counter()
                 self._robot.media.push_audio_sample(audio_frame)
+                self._assistant_playback_chunks += 1
+                self._assistant_playback_audio_ms += len(audio_frame) / output_sample_rate * 1000
+                if self._assistant_playback_first_push_at is None:
+                    self._assistant_playback_first_push_at = pushed_at
+                self._assistant_playback_last_push_at = pushed_at
 
             else:
                 logger.debug("Ignoring output type=%s", type(handler_output).__name__)

@@ -22,7 +22,11 @@ from reachy_mini_conversation_app.startup_settings import (
     StartupSettings,
     load_startup_settings_into_runtime,
 )
-from reachy_mini_conversation_app.audio.latency_probe import POST_ASSISTANT_BEEP_ROLE, POST_ASSISTANT_BEEP_CONTENT
+from reachy_mini_conversation_app.audio.latency_probe import (
+    POST_ASSISTANT_BEEP_ROLE,
+    POST_ASSISTANT_BEEP_CONTENT,
+    make_probe_beep,
+)
 from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
 
 
@@ -186,6 +190,82 @@ async def test_play_loop_pushes_latency_probe_beep(caplog: pytest.LogCaptureFixt
     assert pushed_audio.ndim == 2
     assert pushed_audio.shape[1] == 2
     assert any("Latency probe: pushing post-assistant beep" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_play_loop_logs_assistant_audio_before_latency_probe_beep(caplog: pytest.LogCaptureFixture) -> None:
+    """Post-assistant beep logs should include how much assistant audio was handed to the player."""
+    caplog.set_level(logging.INFO, logger="reachy_mini_conversation_app.console")
+
+    class Handler:
+        def __init__(self) -> None:
+            self.output_queue: asyncio.Queue[Any] = asyncio.Queue()
+            self._outputs = [
+                AdditionalOutputs({"role": "user", "content": "hello"}),
+                (16000, np.ones((1, 1600), dtype=np.int16)),
+                AdditionalOutputs(
+                    {
+                        "role": POST_ASSISTANT_BEEP_ROLE,
+                        "content": POST_ASSISTANT_BEEP_CONTENT,
+                    }
+                ),
+            ]
+
+        async def emit(self) -> AdditionalOutputs | tuple[int, Any] | None:
+            if self._outputs:
+                return self._outputs.pop(0)
+            return None
+
+    audio = SimpleNamespace(
+        _playback_next_pts_ns=0,
+        _get_playback_running_time_ns=lambda: 0,
+    )
+    media = SimpleNamespace(
+        audio=audio,
+        backend=LOCAL_PLAYER_BACKEND,
+        get_output_audio_samplerate=lambda: 16000,
+        get_output_channels=lambda: 1,
+        push_audio_sample=MagicMock(),
+    )
+    robot = SimpleNamespace(media=media)
+    stream = LocalStream(Handler(), robot)
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.02)
+        stream._stop_event.set()
+
+    stopper = asyncio.create_task(stop_soon())
+    try:
+        await asyncio.wait_for(stream.play_loop(), timeout=1.0)
+    finally:
+        await stopper
+
+    assert media.push_audio_sample.call_count == 2
+    assert any(
+        "Latency probe: assistant audio handed to player before beep" in record.getMessage()
+        and "chunks=1" in record.getMessage()
+        and "queued_audio=100 ms" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_latency_probe_beep_detection_logs_recorder_delay(caplog: pytest.LogCaptureFixture) -> None:
+    """Recorder-side probe should log when it detects the diagnostic beep."""
+    caplog.set_level(logging.INFO, logger="reachy_mini_conversation_app.console")
+    handler = MagicMock()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(handler, robot)
+
+    stream._probe_beep_pushed_at = 100.0
+    stream._probe_beep_detect_until_at = 104.0
+
+    stream._check_latency_probe_beep_detection(make_probe_beep(16000), 16000, now=100.25)
+
+    assert stream._probe_beep_pushed_at is None
+    assert any(
+        "Latency probe: post-assistant beep detected by recorder 250 ms after push" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_backend_config_persists_gemini_selection_and_status(
