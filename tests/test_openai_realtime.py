@@ -388,6 +388,59 @@ async def test_realtime_logs_backend_latency_breakdown(monkeypatch: Any, caplog:
 
 
 @pytest.mark.asyncio
+async def test_realtime_logs_response_create_transport_latency(
+    monkeypatch: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A response.created event should be tied back to the preceding response.create send."""
+    caplog.set_level(logging.INFO, logger="reachy_mini_conversation_app.base_realtime")
+
+    def setup_response_create_timing(handler: OpenaiRealtimeHandler) -> None:
+        handler._response_create_timings.append(
+            base_rt_mod.ResponseCreateTiming(
+                event_id="response-create-test",
+                started_at=base_rt_mod.time.perf_counter() - 0.05,
+                send_ms=3.0,
+            )
+        )
+
+    await _run_openai_handler_with_events(
+        monkeypatch,
+        [
+            SimpleNamespace(type="response.created"),
+            SimpleNamespace(type="response.done", response=MagicMock()),
+        ],
+        handler_setup=setup_response_create_timing,
+    )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Realtime transport latency: response.created" in message
+        and "after response.create" in message
+        and "response-create-test" in message
+        for message in messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_realtime_websocket_ping_latency_helper() -> None:
+    """The transport ping helper should use the SDK's underlying websocket ping when available."""
+    loop = asyncio.get_running_loop()
+    handler = _build_handler(loop)
+
+    class FakeRawConnection:
+        async def ping(self) -> Any:
+            async def wait_for_pong() -> float:
+                return 0.123
+
+            return wait_for_pong()
+
+    handler.connection = SimpleNamespace(_connection=FakeRawConnection())  # type: ignore[assignment]
+
+    assert await handler._measure_websocket_ping() == pytest.approx(0.123)
+
+
+@pytest.mark.asyncio
 async def test_realtime_queues_latency_probe_beep_marker(monkeypatch: Any) -> None:
     """Assistant audio completion should queue a latency probe marker when enabled."""
     monkeypatch.setenv(POST_ASSISTANT_BEEP_ENV, "1")
