@@ -624,7 +624,14 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         This method never blocks the caller.
         """
+        pending_before = self._pending_responses.qsize()
+        logger.info(
+            "Queueing response.create (pending_before=%d, kwargs_keys=%s)",
+            pending_before,
+            sorted(kwargs),
+        )
         await self._pending_responses.put(kwargs)
+        logger.debug("response.create queued (pending_after=%d)", self._pending_responses.qsize())
 
     async def _response_sender_loop(self) -> None:
         """Dedicated worker that sends ``response.create()`` calls serially.
@@ -644,6 +651,11 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 kwargs = await self._pending_responses.get()
             except asyncio.CancelledError:
                 return
+            logger.info(
+                "Dequeued response.create (pending_after=%d, kwargs_keys=%s)",
+                self._pending_responses.qsize(),
+                sorted(kwargs),
+            )
 
             sent = False
             max_retries = 5
@@ -664,6 +676,12 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 self._last_response_rejected = False
                 self._response_started_or_rejected_event.clear()
                 try:
+                    logger.info(
+                        "Sending response.create (attempt=%d/%d, kwargs_keys=%s)",
+                        attempts + 1,
+                        max_retries,
+                        sorted(kwargs),
+                    )
                     await self.connection.response.create(**kwargs)
                 except Exception as e:
                     logger.debug("_response_sender_loop: send failed: %s", e)
@@ -736,13 +754,48 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         try:
             self._mark_activity("tool_result_ready")
             send_result_to_model = not bg_tool.is_idle_tool_call
+            result_summary = (
+                sorted(tool_result_for_model)
+                if isinstance(tool_result_for_model, dict)
+                else type(tool_result_for_model).__name__
+            )
+            logger.info(
+                "Tool result ready — tool_name=%r, call_id=%s, status=%s, idle=%s, "
+                "send_result_to_model=%s, result=%s",
+                bg_tool.tool_name,
+                bg_tool.id,
+                bg_tool.status.value,
+                bg_tool.is_idle_tool_call,
+                send_result_to_model,
+                result_summary,
+            )
             if send_result_to_model and isinstance(bg_tool.id, str):
+                logger.info(
+                    "Sending function_call_output — tool_name=%r, call_id=%s, result=%s",
+                    bg_tool.tool_name,
+                    bg_tool.id,
+                    result_summary,
+                )
                 await self.connection.conversation.item.create(
                     item={
                         "type": "function_call_output",
                         "call_id": bg_tool.id,
                         "output": json.dumps(tool_result_for_model),
                     },
+                )
+            elif send_result_to_model:
+                logger.warning(
+                    "Tool result cannot be sent as function_call_output because call_id is not a string "
+                    "(tool_name=%r, call_id=%r)",
+                    bg_tool.tool_name,
+                    bg_tool.id,
+                )
+            else:
+                logger.info(
+                    "Skipping function_call_output for tool result — tool_name=%r, call_id=%s, idle=%s",
+                    bg_tool.tool_name,
+                    bg_tool.id,
+                    bg_tool.is_idle_tool_call,
                 )
 
             await self.output_queue.put(
@@ -813,7 +866,19 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     )
 
             if send_result_to_model:
+                logger.info(
+                    "Requesting post-tool response.create — tool_name=%r, call_id=%s",
+                    bg_tool.tool_name,
+                    bg_tool.id,
+                )
                 await self._safe_response_create()
+            else:
+                logger.info(
+                    "Skipping post-tool response.create — tool_name=%r, call_id=%s, idle=%s",
+                    bg_tool.tool_name,
+                    bg_tool.id,
+                    bg_tool.is_idle_tool_call,
+                )
 
         except self._connection_closed_errors():
             logger.warning("Connection closed while sending tool result")
