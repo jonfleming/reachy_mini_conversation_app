@@ -255,6 +255,7 @@ class PlayEmotion(Tool):
 
     name = "play_emotion"
     description = "Play a robot emotion matching a requested emotional intent."
+    needs_response = False
     parameters_schema = {
         "type": "object",
         "properties": {
