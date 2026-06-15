@@ -58,6 +58,69 @@ all_vision = [
   "mediapipe==0.10.14",
 ]
 
+# Cascade pipeline (ASR -> LLM -> TTS). Base extra is required to run the cascade backend;
+# provider extras are opt-in per ASR/LLM/TTS provider selected in cascade.yaml.
+# Silero VAD (torch + torchaudio) is always loaded by the cascade handler, so the base
+# extra pulls it in; cascade_silero_vad is kept as a standalone alias for clarity.
+cascade = ["reachy_mini_conversation_app[cascade_silero_vad]", "librosa>=0.10.0", "pyyaml>=6.0"]
+cascade_silero_vad = ["torch>=2.0", "torchaudio>=2.0"]
+cascade_parakeet = ["parakeet-mlx>=0.4.0", "ffmpeg-python>=0.2.0"]
+# Pinned to the 0.4.1/0.4.2 line: 0.4.0 and earlier force transformers==5.0.0rc3 (breaks the
+# vision transformers==5.3.0 pin); 0.4.3+ require transformers>=5.5.0 (same break). 0.4.1/0.4.2
+# accept transformers 5.3.0 and only clash with mediapipe (protobuf 6 vs <5) — see conflicts below.
+cascade_parakeet_progressive = ["mlx-audio>=0.4.1,<0.4.3"]
+cascade_voxtral_mlx = ["mlx-audio>=0.4.1,<0.4.3"]
+cascade_nemotron = ["nemo_toolkit[asr]>=2.0"]
+cascade_kokoro = ["kokoro>=0.9.4"]
+cascade_elevenlabs = ["elevenlabs>=1.0.0"]
+cascade_deepgram = ["deepgram-sdk>=3.0.0,<4.0.0"]
+cascade_gradium = ["gradium>=0.5.4; python_version>='3.12'"]
+# GLiNER entity reactions need transformers<5.2.0 (0.2.26 enforces this; 0.2.24 had a buggy
+# unbounded pin and silently produced garbage on transformers 5.x). mlx-audio needs >=5.0.0,
+# so cascade_gliner + MLX ASR resolve together at transformers 5.1.x. The local VLM
+# (local_vision/all_vision) pins transformers==5.3.0 and is therefore mutually exclusive with
+# cascade_gliner — see the conflicts table below and MIGRATION_GAPS.md.
+cascade_gliner = ["gliner>=0.2.26"]
+# Gemini LLM uses google-genai, which is already a core dependency — no extra deps needed.
+
+# ---------------------------------------------------------------------------
+# Curated install profiles. The granular cascade_* extras above are the building
+# blocks (one per cascade.yaml provider); these bundle a coherent, guaranteed-to-
+# resolve stack per platform. There is deliberately NO "everything" bundle: MediaPipe
+# (protobuf<5) excludes MLX ASR (protobuf>=6), and the local VLM (transformers==5.3.0)
+# excludes GLiNER (transformers<5.2). Pick the profile matching your platform.
+# cascade_gradium is never bundled (it requires Python >=3.12); add it explicitly.
+
+# Apple Silicon (recommended default): local MLX ASR + Kokoro TTS + GLiNER entity
+# reactions, with Deepgram/ElevenLabs cloud fallbacks. Resolves at transformers 5.1.x.
+# Pair with yolo_vision; mutually exclusive with mediapipe_vision/all_vision/local_vision.
+cascade_mac = [
+  "reachy_mini_conversation_app[cascade]",
+  "reachy_mini_conversation_app[cascade_parakeet_progressive]",
+  "reachy_mini_conversation_app[cascade_kokoro]",
+  "reachy_mini_conversation_app[cascade_deepgram]",
+  "reachy_mini_conversation_app[cascade_elevenlabs]",
+  "reachy_mini_conversation_app[cascade_gliner]",
+]
+# Any OS (incl. Windows): cloud ASR (Deepgram) + cloud/local TTS (ElevenLabs, Kokoro),
+# cloud LLM. No MLX and no heavy local ML beyond Kokoro+VAD, so it composes with any
+# vision extra and carries no conflicts.
+cascade_cloud = [
+  "reachy_mini_conversation_app[cascade]",
+  "reachy_mini_conversation_app[cascade_deepgram]",
+  "reachy_mini_conversation_app[cascade_elevenlabs]",
+  "reachy_mini_conversation_app[cascade_kokoro]",
+]
+# NVIDIA/Linux: NeMo streaming ASR + Kokoro TTS, with Deepgram/ElevenLabs cloud fallbacks.
+# No GLiNER (NeMo's transformers range is independent of it); use keyword reactions there.
+cascade_cuda = [
+  "reachy_mini_conversation_app[cascade]",
+  "reachy_mini_conversation_app[cascade_nemotron]",
+  "reachy_mini_conversation_app[cascade_kokoro]",
+  "reachy_mini_conversation_app[cascade_deepgram]",
+  "reachy_mini_conversation_app[cascade_elevenlabs]",
+]
+
 [dependency-groups]
 dev = [
   "pytest",
@@ -65,6 +128,7 @@ dev = [
   "ruff==0.12.0",
   "mypy==1.18.2",
   "pre-commit",
+  "types-PyYAML",
 ]
 
 [project.scripts]
@@ -72,6 +136,28 @@ reachy-mini-conversation-app = "reachy_mini_conversation_app.main:main"
 
 [tool.uv]
 exclude-newer = "7 days"
+# The MLX cascade ASR extras (mlx-audio 0.4.1/0.4.2) depend on protobuf>=6, while mediapipe
+# pins protobuf<5 — an irreducible clash (no mlx-audio version satisfies both). mlx-audio is
+# otherwise compatible with the rest of the vision stack (yolo, local_vision/transformers 5.3.0),
+# so only the mediapipe-bearing extras (mediapipe_vision and all_vision, which bundles it) are
+# mutually exclusive with MLX ASR. MLX ASR + yolo head-tracking is the canonical combo and resolves.
+conflicts = [
+  [{ extra = "all_vision" }, { extra = "cascade_parakeet_progressive" }],
+  [{ extra = "all_vision" }, { extra = "cascade_voxtral_mlx" }],
+  [{ extra = "mediapipe_vision" }, { extra = "cascade_parakeet_progressive" }],
+  [{ extra = "mediapipe_vision" }, { extra = "cascade_voxtral_mlx" }],
+  # GLiNER (transformers<5.2) vs the local VLM (transformers==5.3.0). MLX ASR (transformers
+  # >=5.0.0) resolves with either, so gliner + MLX ASR + cloud/yolo vision works at 5.1.x;
+  # gliner + local_vision/all_vision does not. Pick one VLM path.
+  [{ extra = "local_vision" }, { extra = "cascade_gliner" }],
+  [{ extra = "all_vision" }, { extra = "cascade_gliner" }],
+  # cascade_mac bundles MLX ASR + GLiNER, so it inherits both conflicts above (uv does not
+  # infer them transitively from bundled extras — declare explicitly). cascade_cloud and
+  # cascade_cuda carry neither MLX nor GLiNER, so they need no conflict entries.
+  [{ extra = "all_vision" }, { extra = "cascade_mac" }],
+  [{ extra = "mediapipe_vision" }, { extra = "cascade_mac" }],
+  [{ extra = "local_vision" }, { extra = "cascade_mac" }],
+]
 
 [tool.uv.exclude-newer-package]
 "reachy-mini" = false
@@ -96,6 +182,7 @@ reachy_mini_conversation_app = [
   "demos/**/*.txt",
   "prompts_library/*.txt",
   "prompts/**/*.txt",
+  "cascade/*.yaml",
 ]
 reachy_talk_data = [
   "profiles/**/*.txt",
