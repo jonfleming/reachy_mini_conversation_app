@@ -1,0 +1,35 @@
+# Live reactions for the default profile (cascade backend).
+#
+# Each entry maps a transcript trigger to a callback module in this directory.
+# Keyword triggers fire on literal words / globs; entity triggers use GLiNER (NER).
+#
+# NOTE: the food_reaction below uses an ENTITY trigger, which only works when
+# installed with `cascade_gliner` + MLX ASR and WITHOUT the local vision extra
+# (transformers 5.1.x). With the local VLM (transformers 5.3.0) GLiNER is disabled
+# and food_reaction simply won't fire; the keyword reactions still work. See
+# MIGRATION_GAPS.md.
+
+- name: music_excitement
+  callback: excited_about_music
+  trigger:
+    words: [music, guitar, piano, drum, violin]
+
+- name: food_reaction
+  callback: react_to_food
+  trigger:
+    entities: [food]
+  repeatable: true
+
+- name: groovy_dance
+  callback: do_groovy_dance
+  trigger:
+    all:
+      - words: [danc*]
+      - words: [groov*]
+
+- name: reachy_name
+  callback: react_to_name
+  trigger:
+    words: [reachy, richie, reechy]
+  params:
+    emotion: helpful1

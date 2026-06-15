@@ -61,6 +61,7 @@ def run(
         HF_BACKEND,
         GEMINI_BACKEND,
         OPENAI_BACKEND,
+        CASCADE_BACKEND,
         HF_LOCAL_CONNECTION_MODE,
         config,
         is_gemini_model,
@@ -93,6 +94,12 @@ def run(
             startup_settings = load_startup_settings_into_runtime(instance_path)
         except Exception as e:
             logger.warning("Failed to load startup settings: %s", e)
+
+    # Cascade backend selection via CLI overrides any env/.env value above.
+    # Provider selection lives in cascade.yaml (or CASCADE_{ASR,LLM,TTS}_PROVIDER env vars).
+    if args.cascade:
+        os.environ["BACKEND_PROVIDER"] = CASCADE_BACKEND
+        refresh_runtime_config_from_env()
 
     if config.BACKEND_PROVIDER == HF_BACKEND:
         logger.info(
@@ -177,6 +184,17 @@ def run(
 
     def build_handler(startup_voice: Optional[str] = None) -> ConversationHandler:
         """Build a realtime handler for the current runtime backend config."""
+        if config.BACKEND_PROVIDER == CASCADE_BACKEND:
+            from reachy_mini_conversation_app.cascade.handler import CascadeHandler
+
+            logger.info("Using Cascade backend (ASR→LLM→TTS pipeline, configured via cascade.yaml)")
+            return CascadeHandler(
+                deps,
+                gradio_mode=args.gradio,
+                instance_path=instance_path,
+                startup_voice=startup_voice,
+            )
+
         if is_gemini_model():
             from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
 
@@ -231,9 +249,12 @@ def run(
     if args.gradio:
         from reachy_mini_conversation_app.gradio_personality import PersonalityUI
 
-        personality_ui = PersonalityUI()
-        personality_ui.create_components()
-        additional_inputs: list[Any] = [chatbot, *personality_ui.additional_inputs_ordered()]
+        personality_ui: PersonalityUI | None = None
+        additional_inputs: list[Any] = [chatbot]
+        if config.BACKEND_PROVIDER != CASCADE_BACKEND:
+            personality_ui = PersonalityUI()
+            personality_ui.create_components()
+            additional_inputs += personality_ui.additional_inputs_ordered()
 
         if config.BACKEND_PROVIDER in {OPENAI_BACKEND, GEMINI_BACKEND}:
             uses_gemini_backend = is_gemini_model()
@@ -261,7 +282,8 @@ def run(
         else:
             app = settings_app
 
-        personality_ui.wire_events(handler, stream_manager)
+        if personality_ui is not None:
+            personality_ui.wire_events(handler, stream_manager)
 
         app = gr.mount_gradio_app(app, stream.ui, path="/")
     else:
