@@ -1,7 +1,6 @@
 """Tests for MemoryManager (new dreaming-based storage layout)."""
 
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
 
 import pytest
 
@@ -399,14 +398,13 @@ class TestIndexRenderer:
     def test_empty_index(self) -> None:
         """Empty input renders with (none) placeholders."""
         out = render_index([])
-        assert "## Core (pinned)" in out
-        assert "## Recent (last 30 days)" in out
-        assert "## Older" in out
+        assert "## Important" in out
+        assert "## Other" in out
+        assert "## Older topics" in out
         assert out.count("(none)") == 3
 
-    def test_core_renders_pinned(self) -> None:
-        """Pinned memories land in the Core section."""
-        now = datetime(2026, 4, 17, tzinfo=timezone.utc)
+    def test_important_renders_pinned(self) -> None:
+        """Pinned memories land in the Important section, regardless of age."""
         mems = [
             {
                 "id": "2025-01-01_user-name_abc",
@@ -418,13 +416,12 @@ class TestIndexRenderer:
                 "superseded_by": None,
             }
         ]
-        out = render_index(mems, now=now)
-        core_block = out.split("## Recent")[0]
-        assert "[2025-01-01_user-name_abc] User's name is Rémi." in core_block
+        out = render_index(mems)
+        important_block = out.split("## Other")[0]
+        assert "[2025-01-01_user-name_abc] User's name is Rémi." in important_block
 
-    def test_recent_grouped_by_primary_tag(self) -> None:
-        """Recent memories get a ### subheading per first tag."""
-        now = datetime(2026, 4, 17, tzinfo=timezone.utc)
+    def test_other_grouped_by_primary_tag(self) -> None:
+        """Non-pinned memories get a ### subheading per first tag in 'Other'."""
         mems = [
             {
                 "id": "2026-04-10_chess_aaa",
@@ -445,14 +442,33 @@ class TestIndexRenderer:
                 "superseded_by": None,
             },
         ]
-        out = render_index(mems, now=now)
+        out = render_index(mems)
         assert "### chess" in out
         assert "### board-games" in out
 
+    def test_overflow_beyond_limit_collapses_to_older(self) -> None:
+        """Oldest memories beyond the budget drop into 'Older topics' as counts."""
+        mems = [
+            {
+                "id": f"2026-04-1{i}_work_aa{i}",
+                "summary": f"w{i}",
+                "tags": ["work"],
+                "kind": "event",
+                "pinned": False,
+                "created": f"2026-04-1{i}T00:00:00Z",
+                "superseded_by": None,
+            }
+            for i in range(3)
+        ]
+        # Keep only the newest 1 in full; the older 2 overflow to tag counts.
+        out = render_index(mems, limit=1)
+        other = out.split("## Other")[1].split("## Older topics")[0]
+        older = out.split("## Older topics")[1]
+        assert "[2026-04-12_work_aa2] w2" in other  # newest kept in full
+        assert "work (2)" in older  # the older two collapsed to a count
+
     def test_older_section_shows_counts(self) -> None:
-        """Older memories collapse to ranked tag counts."""
-        now = datetime(2026, 4, 17, tzinfo=timezone.utc)
-        old = now - timedelta(days=200)
+        """Overflow memories collapse to ranked tag counts."""
         mems = [
             {
                 "id": f"2025-09-29_work_{i:03x}"[:-1] + "a",
@@ -460,7 +476,7 @@ class TestIndexRenderer:
                 "tags": ["work"],
                 "kind": "event",
                 "pinned": False,
-                "created": old.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "created": "2025-09-29T00:00:00Z",
                 "superseded_by": None,
             }
             for i in range(3)
@@ -472,12 +488,13 @@ class TestIndexRenderer:
                 "tags": ["music"],
                 "kind": "preference",
                 "pinned": False,
-                "created": old.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "created": "2025-09-29T00:00:00Z",
                 "superseded_by": None,
             }
         )
-        out = render_index(mems, now=now)
-        older = out.split("## Older")[1]
+        # Force everything into the overflow so the counts render.
+        out = render_index(mems, limit=0)
+        older = out.split("## Older topics")[1]
         assert "work (3)" in older
         assert "music (1)" in older
         # work appears before music because of higher count

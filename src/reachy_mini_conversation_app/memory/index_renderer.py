@@ -1,19 +1,27 @@
-"""Render the Core / Recent / Older index from memory frontmatters.
+"""Render the Important / Other / Older index from memory frontmatters.
 
 Input: a list of memory summaries (as produced by ``MemoryManager.list_memories``).
 Output: a markdown string written to ``active_memory.md``.
+
+Tiering is by importance and size, NOT by a fixed time window: pinned memories
+are always kept (``Important``); the rest are shown in full newest-first up to a
+budget (``Other``); only the overflow beyond that budget is collapsed to ranked
+tag counts (``Older topics``). So a long gap between sessions never wipes
+memories — only an oversized index does.
 
 See ``docs/memory-system-design.md``.
 """
 
 from __future__ import annotations
 from typing import Any
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from reachy_mini_conversation_app.memory.dates import event_date
 
 
-RECENT_WINDOW = timedelta(days=30)
+# Max number of non-pinned memories shown in full (as one-line summaries) before
+# the oldest overflow into the collapsed ``Older topics`` tag-count section.
+OTHER_LIMIT = 40
 OLDER_TAG_LIMIT = 15
 _MIN_DATE = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -42,44 +50,37 @@ def _tag_counts(memories: list[dict[str, Any]]) -> list[tuple[str, int]]:
     return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
-def render_index(memories: list[dict[str, Any]], now: datetime | None = None) -> str:
+def render_index(memories: list[dict[str, Any]], limit: int = OTHER_LIMIT) -> str:
     """Render the memory index as markdown.
 
-    Memories are split into three tiers:
-      - Core: ``pinned: true``, regardless of age.
-      - Recent: non-pinned, ``created`` within the last 30 days, grouped by primary tag.
-      - Older: everything else, summarised as ranked tag counts.
+    Memories are split into three tiers (by importance and size, not age):
+      - Important: ``pinned: true``, always kept regardless of age.
+      - Other: the newest ``limit`` non-pinned memories, grouped by primary tag.
+      - Older topics: the overflow beyond ``limit``, collapsed to ranked tag counts.
     """
-    now = now or datetime.now(timezone.utc)
-    cutoff = now - RECENT_WINDOW
-
     visible = [m for m in memories if not m.get("superseded_by")]
 
-    core = [m for m in visible if m.get("pinned")]
-    non_core = [m for m in visible if not m.get("pinned")]
+    important = [m for m in visible if m.get("pinned")]
+    others = [m for m in visible if not m.get("pinned")]
 
-    recent: list[dict[str, Any]] = []
-    older: list[dict[str, Any]] = []
-    for mem in non_core:
-        when = event_date(mem)
-        if when is None or when >= cutoff:
-            recent.append(mem)
-        else:
-            older.append(mem)
+    # Keep the newest `limit` in full; the oldest overflow collapses to tag counts.
+    others.sort(key=lambda m: event_date(m) or _MIN_DATE, reverse=True)
+    shown = others[: max(0, limit)]
+    older = others[max(0, limit) :]
 
     lines: list[str] = ["# Memory index", ""]
 
-    lines.append("## Core (pinned)")
-    if core:
-        for mem in sorted(core, key=lambda m: m["id"]):
+    lines.append("## Important")
+    if important:
+        for mem in sorted(important, key=lambda m: m["id"]):
             lines.append(_fmt_entry(mem))
     else:
         lines.append("(none)")
     lines.append("")
 
-    lines.append("## Recent (last 30 days)")
-    if recent:
-        groups = _group_by_primary_tag(recent)
+    lines.append("## Other")
+    if shown:
+        groups = _group_by_primary_tag(shown)
         for tag in sorted(groups):
             lines.append(f"### {tag}")
             for mem in sorted(groups[tag], key=lambda m: event_date(m) or _MIN_DATE):
@@ -88,7 +89,7 @@ def render_index(memories: list[dict[str, Any]], now: datetime | None = None) ->
         lines.append("(none)")
     lines.append("")
 
-    lines.append("## Older")
+    lines.append("## Older topics")
     if older:
         counts = _tag_counts(older)
         lines.append("Tags (count), ranked by frequency:")
