@@ -34,6 +34,7 @@ Conversational app for the Reachy Mini robot combining realtime voice backends, 
   - **Hugging Face** - default, using the built-in Hugging Face server or your own local endpoint.
   - **OpenAI Realtime** (`gpt-realtime-2`) - requires `OPENAI_API_KEY`.
   - **Gemini Live** (`gemini-3.1-flash-live-preview`) - requires `GEMINI_API_KEY`.
+  - **Cascade** (`--cascade`) - a swappable ASR → LLM → TTS pipeline instead of a single realtime model, for mix-and-match providers and cost control. See [Cascade backend](#cascade-backend-asr--llm--tts).
 - Vision processing uses the selected realtime backend by default (when the camera tool is used), with optional on-device local vision using SmolVLM2 (CPU/GPU/MPS) via `--local-vision`.
 - Layered motion system queues primary moves (dances, emotions, goto poses, breathing) while blending speech-reactive wobble and head-tracking.
 - Async tool dispatch integrates robot motion, camera capture, and optional head-tracking capabilities through a Gradio web UI with live transcripts.
@@ -227,6 +228,54 @@ reachy-mini-conversation-app --gradio
 
 > [!WARNING]
 > `--local-vision` is not supported when running the conversation app directly on Reachy Mini Wireless / the Raspberry Pi. For local vision, keep the daemon running on the robot and start the conversation app from your laptop or workstation instead.
+
+## Cascade backend (ASR → LLM → TTS)
+
+Instead of a single speech-to-speech realtime model, the **cascade** backend runs a classic
+pipeline — speech recognition, then a text LLM (with the same robot tools), then text-to-speech —
+with each stage swappable. Use it when you want to mix providers, control cost, or run parts
+locally. It plugs into the same stream/UI/tools as the realtime backends.
+
+Enable it with `--cascade` (selecting providers from `cascade.yaml`):
+
+```bash
+reachy-mini-conversation-app --cascade --gradio
+# override a stage at launch (or set these in .env):
+CASCADE_ASR_PROVIDER=deepgram CASCADE_TTS_PROVIDER=elevenlabs reachy-mini-conversation-app --cascade
+```
+
+Providers are configured in `cascade.yaml` (`provider:` + a `providers:` catalog per stage):
+
+| Stage | Providers |
+|-------|-----------|
+| ASR | `whisper_openai`, `deepgram`, `openai_realtime_asr`, `parakeet_mlx_progressive`, `parakeet_nemo_progressive`, `nemotron`, `voxtral_mlx` |
+| LLM | `gpt-4o-mini`, `gpt-5.2-chat`, `gemini-2.5-flash-lite`, `gemini-3.1-flash-lite` |
+| TTS | `tts_openai`, `kokoro`, `elevenlabs`, `gradium` |
+
+Each provider's dependencies live behind a `cascade_*` extra (install only what you select):
+
+```bash
+uv sync --extra cascade                                     # base + Silero VAD (always required)
+uv sync --extra cascade_deepgram --extra cascade_kokoro     # e.g. Deepgram ASR + Kokoro TTS
+```
+
+There is no single "everything" install: MediaPipe vision and MLX ASR have an irreducible
+`protobuf` clash, and the local VLM and GLiNER have an irreducible `transformers` clash. Instead,
+pick the curated profile that matches your platform (each is guaranteed to resolve):
+
+```bash
+uv sync --extra cascade_mac --extra yolo_vision   # Apple Silicon: MLX ASR + Kokoro + GLiNER + cloud fallbacks
+uv sync --extra cascade_cloud                      # Any OS (incl. Windows): Deepgram + ElevenLabs + Kokoro
+uv sync --extra cascade_cuda                        # NVIDIA/Linux: NeMo ASR + Kokoro + cloud fallbacks
+```
+
+The cascade defaults (`whisper_openai` / `gpt-4o-mini` / `tts_openai`) need only `OPENAI_API_KEY`.
+A profile can also define **live reactions** (`reactions.yaml` + callback modules) that fire robot
+behaviors on keyword/entity triggers in the user's speech. Each callback module is loaded in
+isolation, so keep it self-contained: import shared helpers from the installed package (e.g.
+`dance_emotion_moves`), not from a sibling `.py` file in the profile folder. See
+[`src/reachy_mini_conversation_app/cascade/CASCADE_CODEBASE.md`](src/reachy_mini_conversation_app/cascade/CASCADE_CODEBASE.md)
+for internals.
 
 ## LLM tools exposed to the assistant
 
