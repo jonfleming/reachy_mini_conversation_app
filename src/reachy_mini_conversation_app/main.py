@@ -264,6 +264,16 @@ def run(
 
         personality_ui.wire_events(handler, stream_manager)
 
+        try:
+            from reachy_mini_conversation_app.gradio_rfid import RFIDManagerUI
+            rfid_ui = RFIDManagerUI(handler=handler)
+            rfid_ui.add_to_dashboard(stream.ui)
+            rfid_blocks = rfid_ui.create_rfid_blocks()
+            app = gr.mount_gradio_app(app, rfid_blocks, path="/rfid")
+            logger.info("RFID Manager UI mounted at /rfid and added to dashboard")
+        except Exception as _rfid_exc:
+            logger.warning("RFID UI could not be loaded: %s", _rfid_exc)
+
         app = gr.mount_gradio_app(app, stream.ui, path="/")
     else:
         # In headless mode, wire settings_app + instance_path to console LocalStream

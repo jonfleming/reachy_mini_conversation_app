@@ -113,6 +113,10 @@ class LocalStream:
         """Set the active handler and wire LocalStream-owned helpers into it."""
         self.handler = handler
         self.handler._clear_queue = self.clear_audio_queue
+        # Re-inject RFID deps whenever the handler is replaced
+        if getattr(self, "_rfid_serial", None) is not None:
+            self.handler.deps.rfid_serial = self._rfid_serial
+            self.handler.deps.rfid_store = self._rfid_store
 
     # ---- Settings UI ----
     def _read_env_lines(self, env_path: Path) -> list[str]:
@@ -460,6 +464,491 @@ class LocalStream:
         await self.request_backend_restart("voice_changed")
         return f"Voice changed to {resolved_voice}."
 
+    def _init_rfid_routes(self) -> None:
+        """Add RFID personality-mapping endpoints to the settings app.
+
+        Each RFID code is mapped to a personality name. When a tag is read,
+        the corresponding personality is applied automatically.
+
+        The serial link is owned by the Reachy Mini daemon; this app acts as
+        an HTTP client of the daemon's /api/nfc endpoints.
+        """
+        import uuid as _uuid
+        import sys as _sys
+        import asyncio as _asyncio
+        import threading as _threading
+
+        _proj_root = Path(__file__).parent.parent.parent
+        if str(_proj_root) not in _sys.path:
+            _sys.path.insert(0, str(_proj_root))
+
+        from reachy_mini_conversation_app.nfc_daemon_client import NfcDaemonClient
+        from external_content.rfid_manager.rfid_store import RFIDStore
+
+        _TRANSITION_MOVES = None
+        _MOVES = None
+        try:
+            from reachy_mini_conversation_app.dance_emotion_moves import EmotionQueueMove
+            from reachy_mini.motion.recorded_move import RecordedMoves
+            _TRANSITION_MOVES = RecordedMoves("cdeplanne/local-dataset")
+            _MOVES = RecordedMoves("glannuzel/local-dataset")
+        except Exception:
+            pass
+
+        _nfc_client = NfcDaemonClient()
+        _store = RFIDStore()
+        # Store as instance attrs so _install_handler() can re-inject on backend restart
+        self._rfid_serial = _nfc_client
+        self._rfid_store = _store
+        _app = self._settings_app
+        _get_handler = lambda: self.handler  # noqa: E731 — always returns the current handler
+        _get_loop = lambda: self._asyncio_loop  # noqa: E731
+        _current_rfid_personality: list[str | None] = [None]
+        _blank_tag_active: list[bool] = [False]
+        _delayed_switch_future: list = [None]
+        _prev_tag: list = [None]  # last NfcTagSnapshot seen by /rfid/poll
+
+        # Inject NFC deps into ToolDependencies so nfc_writer can use them
+        self.handler.deps.rfid_serial = _nfc_client
+        self.handler.deps.rfid_store = _store
+        _apply_lock = _threading.Lock()
+
+        _DEFAULT_PROFILE = "(built-in default)"
+
+        class _MappingBody(BaseModel):
+            code: str
+            personality: str
+
+        class _WriteBody(BaseModel):
+            code: str
+
+        @_app.get("/rfid/connection")
+        def _rfid_connection() -> JSONResponse:
+            status = _nfc_client.get_status()
+            return JSONResponse({
+                "connected": status.get("connected", False),
+                "port": status.get("port"),
+                "module_detected": status.get("module_detected", False),
+            })
+
+        @_app.get("/rfid/mappings")
+        def _rfid_mappings() -> JSONResponse:
+            return JSONResponse({"mappings": _store.all()})
+
+        @_app.post("/rfid/mappings")
+        def _rfid_save_mapping(body: _MappingBody) -> JSONResponse:
+            _store.save(body.code, body.personality)
+            return JSONResponse({"ok": True})
+
+        @_app.delete("/rfid/mappings/{code}")
+        def _rfid_delete_mapping(code: str) -> JSONResponse:
+            _store.delete(code)
+            return JSONResponse({"ok": True})
+
+        @_app.post("/rfid/new_mapping")
+        def _rfid_new_mapping() -> JSONResponse:
+            code = _uuid.uuid4().hex[:8].upper()
+            return JSONResponse({"ok": True, "code": code})
+
+        @_app.post("/rfid/write")
+        def _rfid_write(body: _WriteBody) -> JSONResponse:
+            msg = _nfc_client.write_tag(body.code)
+            return JSONResponse({"ok": True, "message": msg})
+
+        @_app.get("/rfid/poll")
+        def _rfid_poll() -> JSONResponse:
+            status = _nfc_client.get_status()
+            port = status.get("port")
+            if not status.get("connected"):
+                _prev_tag[0] = None
+                return JSONResponse({"messages": [], "connected": False, "applied": None, "port": None})
+
+            tag = _nfc_client.get_tag()
+            prev = _prev_tag[0]
+            _prev_tag[0] = tag
+
+            # Build synthetic message list from write results + tag state transitions.
+            # Message format mirrors the firmware line protocol so the processing loop below
+            # works unchanged: "NO_TAG", "READ:", "READ:<code>", "WRITE_OK", "WRITE_FAIL:…"
+            msgs: list[str] = []
+
+            for _success, _result_msg in _nfc_client.drain_write_results():
+                msgs.append(_result_msg)
+
+            if prev is not None:
+                if not tag.present and prev.present:
+                    msgs.append("NO_TAG")
+                elif tag.present and not prev.present:
+                    msgs.append("READ:" if tag.blank else f"READ:{tag.content or ''}")
+                elif tag.present and prev.present:
+                    if tag.blank and not prev.blank:
+                        msgs.append("READ:")
+                    elif not tag.blank and tag.content and tag.content != prev.content:
+                        msgs.append(f"READ:{tag.content}")
+
+            applied = None
+            if not msgs:
+                return JSONResponse({"messages": [], "connected": True, "applied": None, "port": port})
+            if not _apply_lock.acquire(blocking=False):
+                return JSONResponse({"messages": msgs, "connected": True, "applied": None, "port": port})
+            try:
+                handler = _get_handler()
+                logger.info("[RFID] events: %r", msgs)
+
+                for msg in msgs:
+                    if msg.strip() == "NO_TAG":
+                        was_blank = _blank_tag_active[0]
+                        _blank_tag_active[0] = False
+                        handler.deps.blank_tag_present = False
+                        if _delayed_switch_future[0] is not None:
+                            _delayed_switch_future[0].cancel()
+                            _delayed_switch_future[0] = None
+                        loop = _get_loop()
+                        if loop is not None:
+                            try:
+                                _asyncio.run_coroutine_threadsafe(
+                                    handler.abort_nfc_collection(), loop
+                                ).result(timeout=5)
+                            except Exception as _ae:
+                                logger.warning("[RFID] >>> abort_nfc_collection FAILED: %s", _ae)
+                                handler._nfc_transition = False
+                                handler._nfc_speech_done_event.set()
+                        else:
+                            handler._nfc_transition = False
+                            handler._nfc_speech_done_event.set()
+                        if was_blank:
+                            logger.info("[RFID] >>> blank tag removed (blank_tag_present cleared)")
+                            handler.deps.pending_nfc_write = None
+                        if _current_rfid_personality[0] is not None:
+                            logger.info("[RFID] >>> NO_TAG received — reverting to default")
+                            if _TRANSITION_MOVES is not None:
+                                handler.deps.movement_manager.queue_move(
+                                    EmotionQueueMove("switch-personnality-5", _TRANSITION_MOVES)
+                                )
+                            loop = _get_loop()
+                            if loop is not None:
+                                try:
+                                    fut = _asyncio.run_coroutine_threadsafe(
+                                        handler.apply_personality(None), loop
+                                    )
+                                    fut.result(timeout=10)
+                                    _current_rfid_personality[0] = None
+                                    applied = {"code": None, "personality": _DEFAULT_PROFILE}
+                                    logger.info("[RFID] >>> default personality applied OK")
+                                except Exception as exc:
+                                    logger.warning("[RFID] >>> default revert FAILED: %s", exc)
+                    elif msg.startswith("READ:"):
+                        code = msg[5:].strip().rstrip("\x00").strip()
+                        if not code:
+                            handler.deps.blank_tag_present = True
+                            pending = handler.deps.pending_nfc_write
+                            if pending is not None:
+                                _blank_tag_active[0] = True
+                                handler.deps.pending_nfc_write = None
+                                logger.info("[RFID] >>> blank tag with pending write — writing code %r", pending["code"])
+                                handler.deps.recently_written_codes.add(pending["code"])
+                                _nfc_client.write_tag(pending["code"])
+                                loop = _get_loop()
+                                if loop is not None:
+                                    try:
+                                        fut = _asyncio.run_coroutine_threadsafe(
+                                            handler.inject_nfc_writing_started(pending["personality"]), loop
+                                        )
+                                        fut.result(timeout=10)
+                                    except Exception as exc:
+                                        logger.warning("[RFID] >>> inject_nfc_writing_started FAILED: %s", exc)
+                            elif not _blank_tag_active[0]:
+                                _blank_tag_active[0] = True
+                                logger.info("[RFID] >>> blank tag detected — injecting event to LLM")
+                                loop = _get_loop()
+                                if loop is not None:
+                                    try:
+                                        fut = _asyncio.run_coroutine_threadsafe(
+                                            handler.inject_blank_nfc_tag(), loop
+                                        )
+                                        fut.result(timeout=10)
+                                    except Exception as exc:
+                                        logger.warning("[RFID] >>> blank tag inject FAILED: %s", exc)
+                        elif code:
+                            handler.deps.blank_tag_present = False
+                            personality_name = _store.get(code)
+                            if personality_name is not None:
+                                if personality_name == _current_rfid_personality[0]:
+                                    logger.debug("[RFID] >>> same personality %r, skipping", personality_name)
+                                elif code in handler.deps.recently_written_codes:
+                                    handler.deps.recently_written_codes.discard(code)
+                                    _current_rfid_personality[0] = personality_name
+                                    logger.info("[RFID] >>> newly written tag %r — delaying personality switch", code)
+                                    loop = _get_loop()
+                                    if loop is not None:
+                                        if _delayed_switch_future[0] is not None:
+                                            _delayed_switch_future[0].cancel()
+                                        profile = None if personality_name == _DEFAULT_PROFILE else personality_name
+
+                                        async def _delayed_switch(p=profile, pn=personality_name):
+                                            try:
+                                                try:
+                                                    await _asyncio.wait_for(
+                                                        handler._nfc_speech_done_event.wait(), timeout=12.0
+                                                    )
+                                                except _asyncio.TimeoutError:
+                                                    logger.warning("[RFID] >>> NFC speech done event timed out, switching anyway")
+                                                start = handler._nfc_speech_start_time
+                                                samples = handler._nfc_speech_samples
+                                                sr = handler.output_sample_rate
+                                                if start is not None and samples > 0 and sr > 0:
+                                                    speech_duration = samples / sr
+                                                    expected_end = start + speech_duration + 0.8
+                                                    remaining = expected_end - _asyncio.get_event_loop().time()
+                                                    logger.info(
+                                                        "[RFID] >>> welcome speech: %.2fs, waiting %.2fs more before switch",
+                                                        speech_duration, max(0.0, remaining),
+                                                    )
+                                                    if remaining > 0:
+                                                        await _asyncio.sleep(remaining)
+                                                else:
+                                                    logger.warning("[RFID] >>> no speech audio tracked, falling back to drain+sleep")
+                                                    try:
+                                                        async def _drain():
+                                                            while not handler.output_queue.empty():
+                                                                await _asyncio.sleep(0.05)
+                                                        await _asyncio.wait_for(_drain(), timeout=10.0)
+                                                    except _asyncio.TimeoutError:
+                                                        logger.warning("[RFID] >>> audio queue drain timed out")
+                                                    await _asyncio.sleep(1.0)
+                                                if _TRANSITION_MOVES is not None:
+                                                    handler.deps.movement_manager.queue_move(
+                                                        EmotionQueueMove("switch-personnality-5", _TRANSITION_MOVES)
+                                                    )
+                                                await handler.apply_personality(p)
+                                                logger.info("[RFID] >>> delayed personality switch to %r done", pn)
+                                            except _asyncio.CancelledError:
+                                                logger.info("[RFID] >>> delayed personality switch cancelled (tag removed)")
+                                                _current_rfid_personality[0] = None
+                                            except Exception as exc:
+                                                logger.warning("[RFID] >>> delayed personality switch FAILED: %s", exc)
+                                            finally:
+                                                handler._nfc_transition = False
+                                                handler._nfc_speech_done_event.set()
+                                                _delayed_switch_future[0] = None
+
+                                        _delayed_switch_future[0] = _asyncio.run_coroutine_threadsafe(_delayed_switch(), loop)
+                                else:
+                                    logger.info("[RFID] >>> applying personality %r for code %r", personality_name, code)
+                                    if _TRANSITION_MOVES is not None:
+                                        handler.deps.movement_manager.queue_move(
+                                            EmotionQueueMove("switch-personnality-5", _TRANSITION_MOVES)
+                                        )
+                                    loop = _get_loop()
+                                    if loop is not None:
+                                        try:
+                                            profile = None if personality_name == _DEFAULT_PROFILE else personality_name
+                                            fut = _asyncio.run_coroutine_threadsafe(
+                                                handler.apply_personality(profile), loop
+                                            )
+                                            fut.result(timeout=10)
+                                            _current_rfid_personality[0] = personality_name
+                                            applied = {"code": code, "personality": personality_name}
+                                            logger.info("[RFID] >>> personality applied OK")
+                                        except Exception as exc:
+                                            logger.warning("[RFID] >>> apply FAILED: %s", exc)
+                            else:
+                                logger.info("[RFID] >>> code %r not in store, keeping current personality", code)
+                    elif msg.startswith("WRITE_"):
+                        logger.info("[RFID] >>> %s", msg)
+                        loop = _get_loop()
+                        if loop is not None:
+                            success = msg.upper().startswith("WRITE_OK")
+                            move_duration = 0.0
+                            if success:
+                                try:
+                                    _asyncio.run_coroutine_threadsafe(
+                                        handler.stop_current_speech(), loop
+                                    ).result(timeout=6)
+                                except Exception as _se:
+                                    logger.warning("[RFID] >>> stop_current_speech failed: %s", _se)
+                            if success and _MOVES is not None and handler.deps.movement_manager is not None:
+                                try:
+                                    _write_move = EmotionQueueMove("write-tag-6", _MOVES)
+                                    move_duration = float(_write_move.duration)
+                                    _SOUND_LEAD_S = 0.15
+                                    _sound_path = getattr(
+                                        getattr(_write_move, "emotion_move", None),
+                                        "sound_path", None,
+                                    )
+                                    if _sound_path is not None:
+                                        self._robot.media.play_sound(str(_sound_path))
+                                        logger.info("[RFID] >>> write-tag-6 sound started (%.0fms lead): %s", _SOUND_LEAD_S * 1000, _sound_path)
+                                        import time as _time; _time.sleep(_SOUND_LEAD_S)
+                                    else:
+                                        logger.warning("[RFID] >>> write-tag-6: no sound_path found on emotion_move")
+                                    handler.deps.movement_manager.queue_move(_write_move)
+                                    logger.info("[RFID] >>> write-tag-6 queued (%.2fs), speech delayed", move_duration)
+                                except Exception as exc:
+                                    logger.warning("[RFID] >>> write-tag-6 move failed: %s", exc)
+                                    move_duration = 0.0
+                            if move_duration > 0.0:
+                                def _arm_gate():
+                                    handler._nfc_speech_done_event.clear()
+                                    handler._nfc_speech_start_time = None
+                                    handler._nfc_speech_samples = 0
+                                loop.call_soon_threadsafe(_arm_gate)
+
+                                async def _inject_after_move(dur=move_duration, s=success, m=msg):
+                                    await _asyncio.sleep(dur)
+                                    await handler.inject_nfc_write_result(s, m)
+                                _asyncio.run_coroutine_threadsafe(_inject_after_move(), loop)
+                            else:
+                                try:
+                                    fut = _asyncio.run_coroutine_threadsafe(
+                                        handler.inject_nfc_write_result(success, msg),
+                                        loop,
+                                    )
+                                    fut.result(timeout=10)
+                                except Exception as exc:
+                                    logger.warning("[RFID] >>> write result inject FAILED: %s", exc)
+                    else:
+                        logger.debug("[RFID] >>> unhandled event: %r", msg)
+            finally:
+                _apply_lock.release()
+            return JSONResponse({"messages": msgs, "connected": True, "applied": applied, "port": port})
+
+        # ── Personality management (under /rfid/ to avoid runtime route conflicts) ──
+
+        from reachy_mini_conversation_app.headless_personality import (
+            DEFAULT_OPTION as _DEFAULT_OPTION,
+            list_personalities as _list_personalities,
+            read_instructions_for as _read_instructions_for,
+            available_tools_for as _available_tools_for,
+            resolve_profile_dir as _resolve_profile_dir,
+            _write_profile,
+            _sanitize_name,
+        )
+
+        class _PersonalitySaveBody(BaseModel):
+            name: str
+            instructions: str
+            tools_text: str
+            voice: str = "cedar"
+
+        class _PersonalityApplyBody(BaseModel):
+            name: str
+
+        @_app.get("/rfid/personalities/list")
+        def _rfid_pers_list() -> JSONResponse:
+            choices = [_DEFAULT_OPTION, *_list_personalities()]
+            from reachy_mini_conversation_app.config import config as _cfg
+            current = getattr(_cfg, "REACHY_MINI_CUSTOM_PROFILE", None) or _DEFAULT_OPTION
+            personality_to_code = {p: c for c, p in _store.all().items()}
+            return JSONResponse({"choices": choices, "current": current, "personality_to_code": personality_to_code})
+
+        @_app.get("/rfid/personalities/load")
+        def _rfid_pers_load(name: str = "") -> JSONResponse:
+            load_name = name or _DEFAULT_OPTION
+            instr = _read_instructions_for(load_name)
+            tools_txt = ""
+            voice = "cedar"
+            if load_name != _DEFAULT_OPTION:
+                pdir = _resolve_profile_dir(load_name)
+                tp = pdir / "tools.txt"
+                if tp.exists():
+                    tools_txt = tp.read_text(encoding="utf-8")
+                vf = pdir / "voice.txt"
+                if vf.exists():
+                    v = vf.read_text(encoding="utf-8").strip()
+                    voice = v or "cedar"
+            avail = _available_tools_for(load_name)
+            enabled = [
+                ln.strip()
+                for ln in tools_txt.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            return JSONResponse({
+                "instructions": instr,
+                "tools_text": tools_txt,
+                "voice": voice,
+                "available_tools": avail,
+                "enabled_tools": enabled,
+            })
+
+        @_app.post("/rfid/personalities/save")
+        def _rfid_pers_save(body: _PersonalitySaveBody) -> JSONResponse:
+            name_s = _sanitize_name(body.name)
+            if not name_s:
+                return JSONResponse({"ok": False, "error": "invalid_name"}, status_code=400)
+            try:
+                _write_profile(name_s, body.instructions, body.tools_text, body.voice or "cedar")
+                value = f"user_personalities/{name_s}"
+                existing_code = next((c for c, p in _store.all().items() if p == value), None)
+                if existing_code is None:
+                    existing_code = _uuid.uuid4().hex[:8].upper()
+                    _store.save(existing_code, value)
+                choices = [_DEFAULT_OPTION, *_list_personalities()]
+                personality_to_code = {p: c for c, p in _store.all().items()}
+                return JSONResponse({"ok": True, "value": value, "code": existing_code, "choices": choices, "personality_to_code": personality_to_code})
+            except Exception as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+        class _PersonalityDeleteBody(BaseModel):
+            name: str
+
+        @_app.post("/rfid/personalities/delete")
+        def _rfid_pers_delete(body: _PersonalityDeleteBody) -> JSONResponse:
+            import shutil as _shutil
+            if body.name == _DEFAULT_OPTION:
+                return JSONResponse({"ok": False, "error": "cannot_delete_default"}, status_code=400)
+            for code, p in list(_store.all().items()):
+                if p == body.name:
+                    _store.delete(code)
+            try:
+                pdir = _resolve_profile_dir(body.name)
+                if pdir.exists():
+                    _shutil.rmtree(pdir)
+            except Exception:
+                pass
+            choices = [_DEFAULT_OPTION, *_list_personalities()]
+            personality_to_code = {p: c for c, p in _store.all().items()}
+            return JSONResponse({"ok": True, "choices": choices, "personality_to_code": personality_to_code})
+
+        @_app.post("/rfid/personalities/apply")
+        def _rfid_pers_apply(body: _PersonalityApplyBody) -> JSONResponse:
+            loop = _get_loop()
+            if loop is None:
+                return JSONResponse({"ok": False, "error": "loop_unavailable"}, status_code=503)
+
+            async def _do_apply() -> str:
+                handler = _get_handler()
+                profile = None if body.name == _DEFAULT_OPTION else body.name
+                return await handler.apply_personality(profile)
+
+            try:
+                fut = _asyncio.run_coroutine_threadsafe(_do_apply(), loop)
+                status = fut.result(timeout=10)
+                return JSONResponse({"ok": True, "status": status})
+            except Exception as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+        @_app.get("/rfid/voices")
+        def _rfid_voices() -> JSONResponse:
+            loop = _get_loop()
+            if loop is None:
+                return JSONResponse(["cedar"])
+
+            async def _get_v() -> list:
+                try:
+                    handler = _get_handler()
+                    return await handler.get_available_voices()
+                except Exception:
+                    return ["cedar"]
+
+            try:
+                fut = _asyncio.run_coroutine_threadsafe(_get_v(), loop)
+                return JSONResponse(fut.result(timeout=5))
+            except Exception:
+                return JSONResponse(["cedar"])
+
+        logger.info("RFID routes initialized.")
+
     def _init_settings_ui_if_needed(self) -> None:
         """Attach minimal settings UI to the settings app.
 
@@ -644,6 +1133,11 @@ class LocalStream:
             except Exception as e:
                 logger.warning(f"API key validation failed: {e}")
                 return JSONResponse({"valid": False, "error": "validation_error"}, status_code=500)
+
+        try:
+            self._init_rfid_routes()
+        except Exception as _rfid_exc:
+            logger.warning("RFID routes could not be loaded: %s", _rfid_exc)
 
         self._settings_initialized = True
 

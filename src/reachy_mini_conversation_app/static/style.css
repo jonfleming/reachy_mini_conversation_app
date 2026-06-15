@@ -514,3 +514,28 @@ button.ghost:hover { border-color: rgba(94, 240, 193, 0.4); }
   button { width: 100%; justify-content: center; }
   .actions { flex-direction: column; align-items: flex-start; }
 }
+
+/* ─── RFID / NFC section ─────────────────────────────────────────────────── */
+.rfid-tag-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 4px 0;
+  margin: 12px 0 4px;
+}
+.rfid-tag-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.rfid-tag-state.none .rfid-tag-dot   { background: var(--muted); }
+.rfid-tag-state.none #rfid-tag-label { color: var(--muted); }
+.rfid-tag-state.blank .rfid-tag-dot  { background: var(--accent); box-shadow: 0 0 6px rgba(69,196,255,0.55); }
+.rfid-tag-state.blank #rfid-tag-label { color: var(--accent); }
+.rfid-tag-state.unknown .rfid-tag-dot { background: var(--warn); box-shadow: 0 0 6px rgba(255,181,71,0.55); }
+.rfid-tag-state.unknown #rfid-tag-label { color: var(--warn); }
+.rfid-tag-state.known .rfid-tag-dot  { background: var(--ok); box-shadow: 0 0 6px rgba(76,224,179,0.55); }
+.rfid-tag-state.known #rfid-tag-label { color: var(--ok); }

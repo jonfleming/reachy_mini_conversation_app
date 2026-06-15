@@ -11,7 +11,7 @@ import importlib.util
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Dict, List, Callable, ClassVar, Sequence
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from reachy_mini import ReachyMini
 from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY as DEFAULT_PROFILES_PATH
@@ -44,6 +44,11 @@ class ToolDependencies:
     camera_worker: Any | None = None  # CameraWorker for frame buffering
     vision_processor: Any | None = None
     motion_duration_s: float = 1.0
+    rfid_serial: Any | None = None      # NfcDaemonClient (injected at runtime by console.py)
+    rfid_store: Any | None = None       # RFIDStore (injected at runtime by console.py)
+    blank_tag_present: bool = False     # True while a blank NFC tag is on the reader
+    pending_nfc_write: "dict | None" = None  # {"code": str, "personality": str} waiting for blank tag
+    recently_written_codes: "set[str]" = field(default_factory=set)  # codes written but not yet welcomed
 
 
 class Tool(abc.ABC):
@@ -522,11 +527,13 @@ def get_tool_specs(exclusion_list: list[str] | None = None) -> list[Dict[str, An
     return [spec for spec in ALL_TOOL_SPECS if spec.get("name") not in exclusion_list]
 
 
-def get_active_tool_specs(deps: ToolDependencies) -> list[Dict[str, Any]]:
+def get_active_tool_specs(deps: ToolDependencies, extra_exclusions: list[str] | None = None) -> list[Dict[str, Any]]:
     """Get tool specs filtered by what the current session deps support."""
-    exclusion_list: list[str] = []
+    exclusion_list: list[str] = list(extra_exclusions or [])
     if not (deps.camera_worker and deps.camera_worker.head_tracker):
         exclusion_list.append("head_tracking")
+    if deps.rfid_serial is None:
+        exclusion_list.append("nfc_writer")
     return get_tool_specs(exclusion_list)
 
 

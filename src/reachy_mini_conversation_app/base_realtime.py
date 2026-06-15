@@ -166,6 +166,28 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
 
+        # NFC write retry task: started when nfc_writer returns "waiting_for_tag"
+        self._nfc_retry_task: asyncio.Task[None] | None = None
+        # NFC transition gate: True from WRITE_OK until apply_personality completes.
+        # Blocks new _safe_response_create calls and cancels VAD auto-responses.
+        self._nfc_transition: bool = False
+        # Set to True by _response_sender_loop just before response.create so
+        # response.created can distinguish our explicit call from VAD auto-responses.
+        self._explicit_response_pending: bool = False
+        # Set when the welcome speech response.done fires during NFC transition.
+        # _delayed_switch waits on this before applying the personality.
+        self._nfc_speech_done_event: asyncio.Event = asyncio.Event()
+        self._nfc_speech_done_event.set()  # starts in "not waiting" state
+        # Counts down response.done events after blank-tag injection.
+        # While > 0, nfc_writer is excluded from session tools.
+        self._nfc_collect_turns: int = 0
+        # Tracks the welcome-speech audio so _delayed_switch can wait for playback.
+        self._nfc_speech_start_time: float | None = None
+        self._nfc_speech_samples: int = 0
+        # Tracks the most recent audio response (any speech, not just NFC).
+        self._last_speech_start_time: float | None = None
+        self._last_speech_samples: int = 0
+
     @staticmethod
     def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
         """Remove bulky transport-only fields before echoing tool output back to the model."""
@@ -354,6 +376,217 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             logger.error("Error applying personality '%s': %s", profile, e)
             return f"Failed to apply personality: {e}"
 
+    # ── NFC / RFID event injection methods ───────────────────────────────────
+
+    async def inject_blank_nfc_tag(self) -> None:
+        """Notify the LLM that a blank NFC tag has been detected."""
+        if not self.connection:
+            logger.debug("inject_blank_nfc_tag: no active connection, skipping")
+            return
+        logger.info("inject_blank_nfc_tag: injecting blank NFC tag event")
+        # Remove nfc_writer from tools for 2 turns so the LLM cannot call it
+        # before the user finishes describing the personality.
+        self._nfc_collect_turns = 2
+        try:
+            from reachy_mini_conversation_app.tools.core_tools import get_active_tool_specs
+            await self.connection.session.update(
+                session={"type": "realtime", "tools": to_realtime_tools_config(
+                    get_active_tool_specs(self.deps, extra_exclusions=["nfc_writer"])
+                )}
+            )
+            logger.info("inject_blank_nfc_tag: nfc_writer excluded from session tools for 2 turns")
+        except Exception as _te:
+            logger.warning("inject_blank_nfc_tag: failed to update tools: %s", _te)
+        event_text = (
+            "[System event — follow this exact sequence, do not skip steps:\n"
+            "STEP 1 (this turn): An unknown object is on your head. React with curiosity. "
+            "Ask the user ONE question: would they like to give it a personality? Wait for their answer.\n"
+            "STEP 2 (only if user says yes, next turn): Ask them to describe the personality they want. "
+            "Do NOT call nfc_writer yet. Wait for their description.\n"
+            "STEP 3 (only after user has described the personality): "
+            "Express — spontaneously and joyfully — that you feel this new personality growing in this accessory.\n"
+            "THEN and only then call nfc_writer with name, instructions (must include a rule that responses stay short), and voice. "
+            "NEVER call nfc_writer before the user has answered yes AND described the personality in their own words.\n"
+            "If user says no at any point: react naturally and drop the topic.]"
+        )
+        await self.connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": event_text}],
+            },
+        )
+        await self._safe_response_create(response={
+            "instructions": (
+                "An unfamiliar object is on your head. React with curiosity. "
+                "Ask the user if they'd like to give it a personality. "
+                "One or two sentences, warm and playful. Do NOT call any tool yet."
+            ),
+        })
+
+    async def abort_nfc_collection(self) -> None:
+        """Reset all NFC-flow state when the tag is removed mid-flow (before switch)."""
+        self._nfc_transition = False
+        self._nfc_speech_done_event.set()
+        if self._nfc_collect_turns > 0:
+            self._nfc_collect_turns = 0
+            while not self._pending_responses.empty():
+                try:
+                    self._pending_responses.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            if self.connection is not None:
+                try:
+                    await self.connection.response.cancel()
+                except Exception:
+                    pass
+            logger.info("abort_nfc_collection: restoring nfc_writer in session tools")
+            if self.connection is not None:
+                try:
+                    from reachy_mini_conversation_app.tools.core_tools import get_active_tool_specs
+                    await self.connection.session.update(
+                        session={"type": "realtime", "tools": to_realtime_tools_config(get_active_tool_specs(self.deps))}
+                    )
+                except Exception as _te:
+                    logger.warning("abort_nfc_collection: failed to restore tools: %s", _te)
+
+    async def stop_current_speech(self) -> None:
+        """Cancel any in-flight LLM response and wait for buffered audio to finish playing."""
+        if self.connection is not None:
+            try:
+                await self.connection.response.cancel()
+            except Exception:
+                pass
+        while not self._pending_responses.empty():
+            try:
+                self._pending_responses.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        try:
+            await asyncio.wait_for(self._response_done_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("stop_current_speech: timed out waiting for response.done")
+        start = self._last_speech_start_time
+        samples = self._last_speech_samples
+        sr = self.output_sample_rate
+        if start is not None and samples > 0 and sr > 0:
+            remaining = start + samples / sr + 0.3 - asyncio.get_event_loop().time()
+            logger.info(
+                "stop_current_speech: %.2fs of speech, waiting %.2fs for buffer to drain",
+                samples / sr, max(0.0, remaining),
+            )
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+        else:
+            await asyncio.sleep(0.3)
+        logger.info("stop_current_speech: audio buffer cleared, movement can start")
+
+    async def inject_nfc_writing_started(self, personality: str) -> None:
+        """Cancel the retry loop when a blank tag is detected for a pending write."""
+        if self._nfc_retry_task is not None and not self._nfc_retry_task.done():
+            self._nfc_retry_task.cancel()
+            self._nfc_retry_task = None
+        logger.info("inject_nfc_writing_started: blank tag detected, writing code for %r (silent)", personality)
+
+    async def inject_nfc_write_result(self, success: bool, raw_msg: str = "") -> None:
+        """Notify the LLM of the Arduino's NFC tag write confirmation."""
+        if not self.connection:
+            logger.debug("inject_nfc_write_result: no active connection, skipping")
+            return
+        logger.info("inject_nfc_write_result: success=%s raw=%r", success, raw_msg)
+
+        if success:
+            try:
+                await self.connection.response.cancel()
+            except Exception:
+                pass
+            while not self._pending_responses.empty():
+                try:
+                    self._pending_responses.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            logger.info("inject_nfc_write_result: drained pending responses before welcome speech")
+
+        if success:
+            event_text = (
+                "[System event: The new personality is now linked to this object. "
+                "Say this new personality it's eager to express itself in one sentence.]"
+            )
+        else:
+            event_text = (
+                f"[System event: Something went wrong and the object could not be linked ({raw_msg}). "
+                "Tell the user lightly that something didn't work and they could try again.]"
+            )
+        await self.connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": event_text}],
+            },
+        )
+        if success:
+            self._nfc_speech_done_event.clear()
+            self._nfc_speech_start_time = None
+            self._nfc_speech_samples = 0
+        await self._safe_response_create(response={})
+        if success:
+            self._nfc_transition = True
+            logger.info("inject_nfc_write_result: NFC transition started — dialogue paused until personality switch")
+
+    async def _inject_nfc_ask_again(self) -> None:
+        if not self.connection:
+            return
+        logger.info("_inject_nfc_ask_again: still waiting for blank tag")
+        event_text = (
+            "[System event: The object still hasn't appeared. "
+            "Ask the user gently and without pressure to bring it close so the personality can take shape.]"
+        )
+        await self.connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": event_text}],
+            },
+        )
+        await self._safe_response_create(response={})
+
+    async def _inject_nfc_write_cancelled(self) -> None:
+        if not self.connection:
+            return
+        logger.info("_inject_nfc_write_cancelled: timeout, cancelling")
+        event_text = (
+            "[System event: No object appeared after waiting a while. "
+            "Tell the user lightly and naturally that you'll drop it for now — "
+            "the personality idea is still there, it just isn't tied to any object yet.]"
+        )
+        await self.connection.conversation.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": event_text}],
+            },
+        )
+        await self._safe_response_create(response={})
+
+    async def _nfc_retry_loop(self) -> None:
+        """Wait up to 10 s for a blank tag after nfc_writer returned 'waiting_for_tag'.
+
+        - After 5 s with no tag: ask the user again.
+        - After another 5 s: cancel the pending write.
+        """
+        try:
+            await asyncio.sleep(5)
+            if self.deps.pending_nfc_write is None:
+                return
+            await self._inject_nfc_ask_again()
+            await asyncio.sleep(5)
+            if self.deps.pending_nfc_write is None:
+                return
+            self.deps.pending_nfc_write = None
+            await self._inject_nfc_write_cancelled()
+        except asyncio.CancelledError:
+            pass
+
     async def _emit_debounced_partial(self, transcript: str, item_id: str, sequence_counter: int) -> None:
         """Emit partial transcript after debounce delay."""
         try:
@@ -473,6 +706,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         This method never blocks the caller.
         """
+        if self._nfc_transition:
+            logger.debug("_safe_response_create: NFC transition in progress, dropping")
+            return
         await self._pending_responses.put(kwargs)
 
     async def _response_sender_loop(self) -> None:
@@ -518,6 +754,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     break
 
                 self._last_response_rejected = False
+                self._explicit_response_pending = True
                 self._response_started_or_rejected_event.clear()
                 try:
                     await self.connection.response.create(**kwargs)
@@ -668,9 +905,20 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         ),
                     )
 
+            if bg_tool.tool_name == "nfc_writer" and isinstance(tool_result, dict) and tool_result.get("status") == "waiting_for_tag":
+                if self._nfc_retry_task is not None and not self._nfc_retry_task.done():
+                    self._nfc_retry_task.cancel()
+                self._nfc_retry_task = asyncio.create_task(self._nfc_retry_loop())
+                logger.info("_handle_tool_result: started NFC retry loop")
+
+            nfc_silent = (
+                bg_tool.tool_name == "nfc_writer"
+                and isinstance(tool_result, dict)
+                and tool_result.get("status") == "writing"
+            )
             tool = core_tools.ALL_TOOLS.get(bg_tool.tool_name)
             # Always surface errors, skip the spoken follow-up for tools that opt out.
-            if send_result_to_model and (bg_tool.error is not None or tool is None or tool.needs_response):
+            if send_result_to_model and not nfc_silent and (bg_tool.error is not None or tool is None or tool.needs_response):
                 await self._safe_response_create()
 
         except self._connection_closed_errors():
@@ -705,6 +953,12 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 raise
 
             logger.info("Realtime session updated successfully")
+
+            # Reset NFC state for each new session
+            self._nfc_transition = False
+            self._explicit_response_pending = False
+            self._nfc_speech_done_event.set()  # ensure not blocking if restarted mid-transition
+            self._nfc_collect_turns = 0
 
             # Reset the partial-transcript accumulator for each new session
             self.input_transcript_chunks_by_item = InputTranscriptChunksByItem()
@@ -749,6 +1003,14 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         self._mark_activity("response_created")
                         self._response_done_event.clear()
                         self._response_started_or_rejected_event.set()
+                        self._last_speech_start_time = None  # reset for new response
+                        if self._nfc_transition and not self._explicit_response_pending:
+                            logger.info("NFC transition: cancelling VAD auto-response")
+                            try:
+                                await self.connection.response.cancel()
+                            except Exception as _ce:
+                                logger.debug("NFC transition: response.cancel failed: %s", _ce)
+                        self._explicit_response_pending = False
                         if self._turn_user_done_at is not None and self._turn_response_created_at is None:
                             self._turn_response_created_at = time.perf_counter()
                             delta_ms = (self._turn_response_created_at - self._turn_user_done_at) * 1000
@@ -759,6 +1021,21 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         # Doesn't mean the audio is done playing
                         self._response_done_event.set()
                         self._response_started_or_rejected_event.set()
+                        if self._nfc_transition and not self._nfc_speech_done_event.is_set():
+                            self._nfc_speech_done_event.set()
+                            logger.info("NFC transition: welcome speech done, switch can proceed")
+                        if self._nfc_collect_turns > 0:
+                            self._nfc_collect_turns -= 1
+                            logger.debug("NFC collect turns remaining: %d", self._nfc_collect_turns)
+                            if self._nfc_collect_turns == 0:
+                                logger.info("NFC collect turns done — restoring nfc_writer in session tools")
+                                try:
+                                    from reachy_mini_conversation_app.tools.core_tools import get_active_tool_specs
+                                    await self.connection.session.update(
+                                        session={"type": "realtime", "tools": to_realtime_tools_config(get_active_tool_specs(self.deps))}
+                                    )
+                                except Exception as _te:
+                                    logger.warning("Failed to restore nfc_writer in tools: %s", _te)
                         logger.debug("Response done")
 
                         response = getattr(event, "response", None)
@@ -826,6 +1103,15 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         if self.gradio_mode:
                             self._tap_audio_for_daemon_wobbler(decoded_pcm)
                         self._mark_activity("assistant_audio_delta")
+                        now = asyncio.get_event_loop().time()
+                        if self._nfc_transition:
+                            if self._nfc_speech_start_time is None:
+                                self._nfc_speech_start_time = now
+                            self._nfc_speech_samples += decoded_pcm.shape[1]
+                        if self._last_speech_start_time is None:
+                            self._last_speech_start_time = now
+                            self._last_speech_samples = 0
+                        self._last_speech_samples += decoded_pcm.shape[1]
                         if self._turn_user_done_at is not None and self._turn_first_audio_at is None:
                             self._turn_first_audio_at = time.perf_counter()
                             delta_ms = (self._turn_first_audio_at - self._turn_user_done_at) * 1000
@@ -882,6 +1168,10 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         logger.info(
                             "Started background tool: %s (id=%s, call_id=%s)", tool_name, bg_tool.tool_id, call_id
                         )
+                        # nfc_writer speech is handled entirely by inject_nfc_write_result
+                        # (triggered by WRITE_OK from the hardware) — suppress narration here.
+                        if tool_name == "nfc_writer":
+                            continue
 
                     # server error
                     if event.type == "error":

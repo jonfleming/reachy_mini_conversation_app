@@ -159,6 +159,43 @@
         </div>
       </div>
 
+      <!-- ── RFID / NFC panel ──────────────────────────────────────────── -->
+      <div id="rfid-status-panel" class="panel hidden">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Accessories &amp; NFC</p>
+            <h2>RFID Reader</h2>
+          </div>
+          <span id="rfid-conn-chip" class="chip">Disconnected</span>
+        </div>
+        <p class="muted">When a tag is placed on the reader, its associated personality is applied automatically.</p>
+
+        <div class="rfid-conn-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <select id="rfid-port" style="flex:1;min-width:0">
+            <option value="">No port</option>
+          </select>
+          <button id="rfid-refresh-btn" class="ghost" type="button" style="white-space:nowrap;padding:6px 12px">⟳</button>
+          <button id="rfid-connect-btn" type="button" style="white-space:nowrap;padding:6px 14px">Connect</button>
+        </div>
+
+        <div id="rfid-tag-state" class="rfid-tag-state none" style="display:flex;align-items:center;gap:8px;margin:12px 0 4px">
+          <span class="rfid-tag-dot" style="width:10px;height:10px;border-radius:50%;background:var(--muted,#888);flex-shrink:0"></span>
+          <span id="rfid-tag-label">No tag</span>
+        </div>
+        <p id="rfid-op-status" class="status small"></p>
+
+        <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.08)" />
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+          <div>
+            <p class="label-sm" style="margin:0">Reset a tag</p>
+            <p class="muted small" style="margin:2px 0 0">Erases the tag content and makes it blank again</p>
+          </div>
+          <button id="rfid-clear-btn" class="ghost" type="button" disabled style="white-space:nowrap;padding:6px 12px">🗑 Erase</button>
+        </div>
+        <p id="rfid-clear-status" class="status small"></p>
+      </div>
+      <!-- ── /RFID panel ─────────────────────────────────────────────────── -->
+
       <div id="personality-panel" class="panel hidden">
         <div class="panel-heading">
           <div>
