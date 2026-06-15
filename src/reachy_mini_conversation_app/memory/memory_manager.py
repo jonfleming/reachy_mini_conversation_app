@@ -505,10 +505,12 @@ class MemoryManager:
             return ""
         return (
             "\n\n## MEMORY\n"
-            "The index below is automatically curated between sessions. "
-            "Use `recall_memory(id)` to read a specific memory and its related neighbours, or "
-            "`recall_memories(tag=..., date_from=..., date_to=...)` to filter by topic and/or "
-            "conversation date. Dates always refer to when something was discussed.\n\n" + content
+            "This is your own memory of the user, curated between sessions. "
+            "Answer from it directly whenever you can. If you need a detail it doesn't hold, "
+            "call `recall_memories(tag=...)` — you may query several tags in one go — or "
+            "`recall_memory(id)` for a specific entry; dates refer to when something was discussed. "
+            "One search is usually enough; never chain more than two rounds of lookups before you answer.\n\n"
+            + content
         )
 
     # ------------------------------------------------------------------
