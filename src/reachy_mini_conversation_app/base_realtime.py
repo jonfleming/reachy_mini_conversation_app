@@ -185,6 +185,17 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
 
+        # Coalesce the spoken follow-up after tool calls. A single model response
+        # can emit several parallel function calls (e.g. multiple memory recalls);
+        # they must yield exactly ONE follow-up response.create — fired once that
+        # response is done emitting calls and all its tool outputs are back — not
+        # one per tool, which made the robot repeat the same answer N times. The
+        # Realtime API only has one active response at a time, so a single
+        # in-flight tool turn is all we ever need to track.
+        self._tool_turn_response_id: str | None = None
+        self._tool_turn_outstanding: int = 0
+        self._tool_turn_calls_done: bool = False
+
     @staticmethod
     def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
         """Remove bulky transport-only fields before echoing tool output back to the model."""
@@ -766,19 +777,46 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         ),
                     )
 
-            # If this tool call was triggered by an idle signal, don't make the robot speak.
-            # For other tool calls, let the robot reply out loud.
+            # Idle tool calls never speak. For other calls, count this output in and
+            # let the robot reply out loud — but only ONCE per model turn, even when
+            # the turn fired several parallel tool calls.
             if not bg_tool.is_idle_tool_call:
-                await self._safe_response_create(
-                    response=RealtimeResponseCreateParamsParam(
-                        instructions="Use the tool result just returned and answer concisely in speech.",
-                    ),
-                )
+                if self._tool_turn_response_id is not None:
+                    self._tool_turn_outstanding = max(0, self._tool_turn_outstanding - 1)
+                    await self._maybe_fire_turn_response()
+                else:
+                    # No tracked turn for this result (e.g. reconnect mid-turn):
+                    # fall back to the original one-response-per-tool behavior so
+                    # the robot still answers.
+                    await self._safe_response_create(
+                        response=RealtimeResponseCreateParamsParam(
+                            instructions="Use the tool result just returned and answer concisely in speech.",
+                        ),
+                    )
 
         except self._connection_closed_errors():
             logger.warning("Connection closed while sending tool result")
             self.connection = None
             self._response_done_event.set()
+
+    async def _maybe_fire_turn_response(self) -> None:
+        """Request one spoken follow-up once the current tool turn is fully resolved.
+
+        Fires only when the function-call response is done emitting calls and every
+        one of its tool outputs has been returned — so several parallel function
+        calls yield ONE ``response.create``, not one per call.
+        """
+        if self._tool_turn_response_id is None or not self._tool_turn_calls_done:
+            return
+        if self._tool_turn_outstanding > 0:
+            return
+        self._tool_turn_response_id = None
+        self._tool_turn_calls_done = False
+        await self._safe_response_create(
+            response=RealtimeResponseCreateParamsParam(
+                instructions="Use the tool results just returned and answer concisely in speech.",
+            ),
+        )
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
@@ -810,6 +848,11 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
             # Reset the partial-transcript accumulator for each new session
             self.input_transcript_chunks_by_item = InputTranscriptChunksByItem()
+
+            # Reset per-turn tool-call coalescing state for the fresh session.
+            self._tool_turn_response_id = None
+            self._tool_turn_outstanding = 0
+            self._tool_turn_calls_done = False
 
             # Manage events received from the realtime server.
             self.connection = conn
@@ -873,6 +916,14 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         self._response_started_or_rejected_event.set()
                         self.is_idle_tool_call = False
                         logger.debug("Response done")
+
+                        # This response is done emitting items. If it is the current
+                        # tool turn, mark its calls complete and fire the single
+                        # coalesced follow-up once all outputs are back (maybe now).
+                        fc_response_id = str(getattr(getattr(event, "response", None), "id", "") or "")
+                        if fc_response_id == self._tool_turn_response_id:
+                            self._tool_turn_calls_done = True
+                            await self._maybe_fire_turn_response()
 
                         response = getattr(event, "response", None)
                         usage = getattr(response, "usage", None) if response else None
@@ -989,6 +1040,17 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                                 call_id,
                             )
                             continue
+
+                        # Track this call against its model turn so we can coalesce
+                        # the spoken follow-up. Idle tool calls never speak, so they
+                        # are deliberately not counted.
+                        if not self.is_idle_tool_call:
+                            response_id = str(getattr(event, "response_id", "") or "")
+                            if response_id != self._tool_turn_response_id:
+                                self._tool_turn_response_id = response_id
+                                self._tool_turn_outstanding = 0
+                                self._tool_turn_calls_done = False
+                            self._tool_turn_outstanding += 1
 
                         bg_tool = await self.tool_manager.start_tool(
                             call_id=call_id,
