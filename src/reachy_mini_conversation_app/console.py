@@ -555,6 +555,43 @@ class LocalStream:
             msg = _nfc_client.write_tag(body.code)
             return JSONResponse({"ok": True, "message": msg})
 
+        class _LinkTagBody(BaseModel):
+            personality: str
+
+        @_app.post("/rfid/link_tag")
+        def _rfid_link_tag(body: _LinkTagBody) -> JSONResponse:
+            """Link the tag currently on the reader to the given personality.
+
+            If the tag is blank, a fresh unique code is generated and written to it first.
+            """
+            personality = (body.personality or "").strip()
+            if not personality:
+                return JSONResponse({"ok": False, "error": "no_personality"}, status_code=400)
+            tag = _nfc_client.get_tag()
+            if not tag.present:
+                return JSONResponse({"ok": False, "error": "no_tag"})
+            if tag.blank or not tag.content:
+                # Generate a code not already in the store
+                existing_codes = set(_store.all().keys())
+                code = _uuid.uuid4().hex[:8].upper()
+                while code in existing_codes:
+                    code = _uuid.uuid4().hex[:8].upper()
+                # Persist mapping before writing so the poll loop can apply it immediately
+                _store.save(code, personality)
+                logger.info("[RFID] Writing new code %r to blank tag for personality %r", code, personality)
+                success, detail = _nfc_client.write_tag_sync(code)
+                if not success:
+                    _store.delete(code)
+                    logger.warning("[RFID] Write failed for code %r: %s", code, detail)
+                    return JSONResponse({"ok": False, "error": "write_failed", "detail": detail})
+                logger.info("[RFID] Tag %r written and linked to %r", code, personality)
+                return JSONResponse({"ok": True, "code": code, "personality": personality, "written": True})
+            else:
+                code = tag.content
+                _store.save(code, personality)
+                logger.info("[RFID] Linked existing tag %r to personality %r", code, personality)
+                return JSONResponse({"ok": True, "code": code, "personality": personality, "written": False})
+
         @_app.get("/rfid/poll")
         def _rfid_poll() -> JSONResponse:
             status = _nfc_client.get_status()

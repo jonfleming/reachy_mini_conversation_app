@@ -126,6 +126,29 @@ class NfcDaemonClient:
         threading.Thread(target=_worker, daemon=True).start()
         return f"Bring a tag close to write '{text}'…"
 
+    def write_tag_sync(self, code: str, timeout: float = 12.0) -> tuple[bool, str]:
+        """Write ``code`` synchronously (tag must already be on the reader).
+
+        Returns ``(True, "WRITE_OK")`` on success or ``(False, reason)`` on failure.
+        """
+        text = code[:12]
+        try:
+            r = requests.post(
+                f"{self.base}/api/nfc/write",
+                json={"text": text},
+                timeout=timeout,
+            )
+            if r.status_code == 503:
+                return False, r.json().get("detail", "unavailable")
+            r.raise_for_status()
+            d = r.json()
+            if d.get("success"):
+                return True, "WRITE_OK"
+            return False, d.get("error", "unknown")
+        except Exception as exc:
+            logger.warning("NFC write_tag_sync error: %s", exc)
+            return False, str(exc)
+
     def drain_write_results(self) -> list[tuple[bool, str]]:
         """Drain and return all pending write results (non-blocking)."""
         results: list[tuple[bool, str]] = []

@@ -867,6 +867,8 @@ async function init() {
     if (!voices.length) {
       setStatusMessage(pStatus, "Voices unavailable. The backend default voice will be used.", "warn");
     }
+    _rfidSelectEl = pSelect;
+    _rfidLoadPersonality = loadSelected;
     show(personalityPanel, true);
 
     pApplyVoice.addEventListener("click", async () => {
@@ -1001,6 +1003,8 @@ function rfidSetConnected(connected, port) {
     connectBtn.style.opacity = connected ? "0.75" : "";
   }
   if (clearBtn) clearBtn.disabled = !connected;
+  const linkTagBtn = document.getElementById("link-tag-btn");
+  if (linkTagBtn) linkTagBtn.disabled = !connected;
   if (connected && port) {
     const sel = document.getElementById("rfid-port");
     if (sel && sel.value !== port) {
@@ -1039,6 +1043,8 @@ function rfidSetClearStatus(msg, type) {
 }
 
 let _rfidClearPending = false;
+let _rfidSelectEl = null;       // set by initPersonalityPanel, used by rfidPoll
+let _rfidLoadPersonality = null;
 
 async function rfidPoll() {
   const data = await rfidFetch("/rfid/poll");
@@ -1081,6 +1087,14 @@ async function rfidPoll() {
     const pers = data.applied.personality;
     if (code && pers) rfidSetTagState("known", `${code} → ${pers}`);
     else if (!code) rfidSetOpStatus("Reverted to default personality", "ok");
+    // Auto-select the personality in Personality Studio
+    if (_rfidSelectEl && _rfidLoadPersonality && pers) {
+      const opts = Array.from(_rfidSelectEl.options);
+      if (opts.some(o => o.value === pers) && _rfidSelectEl.value !== pers) {
+        _rfidSelectEl.value = pers;
+        await _rfidLoadPersonality();
+      }
+    }
   }
 }
 
@@ -1120,6 +1134,32 @@ function initRFID() {
     } else {
       _rfidClearPending = false;
       rfidSetClearStatus(data?.message || "Erase command failed.", "error");
+    }
+  });
+
+  document.getElementById("link-tag-btn")?.addEventListener("click", async () => {
+    const personality = _rfidSelectEl?.value;
+    if (!personality) return;
+    const btn = document.getElementById("link-tag-btn");
+    const statusEl = document.getElementById("link-tag-status");
+    if (btn) btn.disabled = true;
+    if (statusEl) { statusEl.textContent = "Linking…"; statusEl.className = "status small"; }
+    const res = await rfidFetch("/rfid/link_tag", {
+      method: "POST",
+      body: JSON.stringify({ personality }),
+    });
+    if (btn) btn.disabled = false;
+    if (!res) return;
+    if (res.ok) {
+      const msg = res.written
+        ? `✓ Code written & linked (${res.code})`
+        : `✓ Linked to ${res.code}`;
+      if (statusEl) { statusEl.textContent = msg; statusEl.className = "status small ok"; }
+    } else {
+      const msg = res.error === "no_tag" ? "No tag on reader"
+                : res.error === "write_failed" ? `Write failed: ${res.detail || ""}`
+                : res.error || "Failed";
+      if (statusEl) { statusEl.textContent = `⚠ ${msg}`; statusEl.className = "status small warn"; }
     }
   });
 }

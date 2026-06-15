@@ -443,6 +443,11 @@ button.ghost:hover { border-color: rgba(94, 240, 193, 0.4); }
   gap: 10px;
   flex-wrap: wrap;
 }
+.link-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .row-save .actions {
   justify-content: flex-start;
 }
