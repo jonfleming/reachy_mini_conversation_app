@@ -9,12 +9,14 @@ import threading
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
+import httpx
 import gradio as gr
 from fastapi import FastAPI
 from fastrtc import Stream
 from gradio.utils import get_space
 
 from reachy_mini import ReachyMini, ReachyMiniApp
+from reachy_mini.io.protocol import SetVolumeCmd
 from reachy_mini_conversation_app.utils import (
     CameraVisionInitializationError,
     parse_args,
@@ -33,6 +35,15 @@ def update_chatbot(chatbot: List[Dict[str, Any]], response: Dict[str, Any]) -> L
 def main() -> None:
     """Entrypoint for the Reachy Mini conversation app."""
     args, _ = parse_args()
+    if args.command == "tool-spaces":
+        from reachy_mini_conversation_app.tool_spaces import handle_tool_spaces_command
+
+        logger = setup_logger(args.debug)
+        try:
+            raise SystemExit(handle_tool_spaces_command(args))
+        except Exception as exc:
+            logger.error("tool-spaces command failed: %s", exc)
+            raise SystemExit(1) from exc
     run(args)
 
 
@@ -99,8 +110,14 @@ def run(
         )
 
     from reachy_mini_conversation_app.console import LocalStream
-    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
-    from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
+    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
+    from reachy_mini_conversation_app.conversation_handler import ConversationHandler
+
+    try:
+        initialize_tools(instance_path=instance_path)
+    except Exception as e:
+        logger.error("Failed to initialize tools: %s", e)
+        sys.exit(1)
 
     if args.no_camera and args.head_tracker is not None:
         logger.warning("Head tracking disabled: --no-camera flag is set. Remove --no-camera to enable head tracking.")
@@ -129,21 +146,6 @@ def run(
             logger.error("Please check your configuration and try again.")
             sys.exit(1)
 
-    # Auto-enable Gradio in simulation mode (both MuJoCo for daemon and mockup-sim for desktop app)
-    status = robot.client.get_status()
-    if isinstance(status, dict):
-        simulation_enabled = status.get("simulation_enabled", False)
-        mockup_sim_enabled = status.get("mockup_sim_enabled", False)
-    else:
-        simulation_enabled = getattr(status, "simulation_enabled", False)
-        mockup_sim_enabled = getattr(status, "mockup_sim_enabled", False)
-
-    is_simulation = simulation_enabled or mockup_sim_enabled
-
-    if is_simulation and not args.gradio:
-        logger.info("Simulation mode detected. Automatically enabling gradio flag.")
-        args.gradio = True
-
     try:
         camera_worker, vision_processor = initialize_camera_and_vision(args, robot)
     except CameraVisionInitializationError as e:
@@ -155,14 +157,12 @@ def run(
         camera_worker=camera_worker,
     )
 
-    head_wobbler = HeadWobbler(set_speech_offsets=movement_manager.set_speech_offsets)
-
     deps = ToolDependencies(
         reachy_mini=robot,
         movement_manager=movement_manager,
+        instance_path=instance_path,
         camera_worker=camera_worker,
         vision_processor=vision_processor,
-        head_wobbler=head_wobbler,
     )
     current_file_path = os.path.dirname(os.path.abspath(__file__))
     logger.debug(f"Current file absolute path: {current_file_path}")
@@ -176,52 +176,56 @@ def run(
     )
     logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
 
-    if is_gemini_model():
-        from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
+    def build_handler(startup_voice: Optional[str] = None) -> ConversationHandler:
+        """Build a realtime handler for the current runtime backend config."""
+        if is_gemini_model():
+            from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
 
-        logger.info(
-            "Using %s via GeminiLiveHandler",
-            get_backend_label(config.BACKEND_PROVIDER),
-        )
-        handler = GeminiLiveHandler(
-            deps,
-            gradio_mode=args.gradio,
-            instance_path=instance_path,
-            startup_voice=startup_settings.voice,
-        )
-    elif config.BACKEND_PROVIDER == HF_BACKEND:
-        from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
+            logger.info(
+                "Using %s via GeminiLiveHandler",
+                get_backend_label(config.BACKEND_PROVIDER),
+            )
+            return GeminiLiveHandler(
+                deps,
+                gradio_mode=args.gradio,
+                instance_path=instance_path,
+                startup_voice=startup_voice,
+            )
+        if config.BACKEND_PROVIDER == HF_BACKEND:
+            from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
 
-        hf_connection_selection = get_hf_connection_selection()
-        transport_label = (
-            "Hugging Face direct websocket"
-            if hf_connection_selection.mode == HF_LOCAL_CONNECTION_MODE and hf_connection_selection.has_target
-            else "Hugging Face session proxy"
-        )
-        logger.info(
-            "Using %s via Hugging Face realtime handler (%s)",
-            get_backend_label(config.BACKEND_PROVIDER),
-            transport_label,
-        )
-        handler = HuggingFaceRealtimeHandler(
-            deps,
-            gradio_mode=args.gradio,
-            instance_path=instance_path,
-            startup_voice=startup_settings.voice,
-        )  # type: ignore[assignment]
-    else:
+            hf_connection_selection = get_hf_connection_selection()
+            transport_label = (
+                "Hugging Face direct websocket"
+                if hf_connection_selection.mode == HF_LOCAL_CONNECTION_MODE and hf_connection_selection.has_target
+                else "Hugging Face session proxy"
+            )
+            logger.info(
+                "Using %s via Hugging Face realtime handler (%s)",
+                get_backend_label(config.BACKEND_PROVIDER),
+                transport_label,
+            )
+            return HuggingFaceRealtimeHandler(
+                deps,
+                gradio_mode=args.gradio,
+                instance_path=instance_path,
+                startup_voice=startup_voice,
+            )
+
         from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
 
         logger.info(
             "Using %s via OpenAI realtime handler (OpenAI Realtime API)",
             get_backend_label(config.BACKEND_PROVIDER),
         )
-        handler = OpenaiRealtimeHandler(
+        return OpenaiRealtimeHandler(
             deps,
             gradio_mode=args.gradio,
             instance_path=instance_path,
-            startup_voice=startup_settings.voice,
-        )  # type: ignore[assignment]
+            startup_voice=startup_voice,
+        )
+
+    handler = build_handler(startup_settings.voice)
 
     stream_manager: gr.Blocks | LocalStream | None = None
 
@@ -268,11 +272,41 @@ def run(
             robot,
             settings_app=settings_app,
             instance_path=instance_path,
+            handler_factory=build_handler,
+            startup_voice=startup_settings.voice,
         )
 
     # Each async service → its own thread/loop
     movement_manager.start()
-    head_wobbler.start()
+    # Audio-reactive head motion is driven by the daemon's wobbler, which
+    # taps the media pipeline at push_audio_sample. In headless mode the
+    # console stream pushes assistant audio through that pipeline directly.
+    # In Gradio mode audio plays in the browser; the handler additionally
+    # taps the same call to keep the wobbler fed (see
+    # BaseRealtimeHandler._tap_audio_for_daemon_wobbler) — mute the robot
+    # speaker to avoid double playback.
+    robot.enable_wobbling()
+    saved_speaker_volume: int | None = None
+    if args.gradio:
+        # LocalStream.launch() starts the playback pipeline in headless mode.
+        # In Gradio mode nothing else does, and push_audio_sample is a no-op
+        # until the pipeline is in PLAYING state — so the wobbler stays idle.
+        try:
+            robot.media.start_playing()
+        except Exception as exc:
+            logger.warning(f"Failed to start media playback for Gradio mode: {exc}")
+        # Audio plays in the browser; silence the robot speaker so we don't
+        # hear it twice. GET via REST to read the current level (no side
+        # effects), SET via the WS protocol so the daemon does not fire its
+        # "test sound" played by POST /api/volume/set on each call.
+        try:
+            volume_url = f"http://{robot.client.host}:{robot.client.port}/api/volume/current"
+            saved_speaker_volume = int(httpx.get(volume_url, timeout=2).json()["volume"])
+            robot.client.send_command(SetVolumeCmd(volume=0))
+            logger.info(f"Muted robot speaker for Gradio mode (saved volume: {saved_speaker_volume})")
+        except Exception as exc:
+            logger.warning(f"Could not mute robot speaker: {exc}")
+            saved_speaker_volume = None
     if camera_worker:
         camera_worker.start()
 
@@ -296,7 +330,16 @@ def run(
         logger.info("Keyboard interruption in main thread... closing server.")
     finally:
         movement_manager.stop()
-        head_wobbler.stop()
+        try:
+            robot.disable_wobbling()
+        except Exception as e:
+            logger.debug(f"Error disabling wobbling during shutdown: {e}")
+        if saved_speaker_volume is not None:
+            try:
+                robot.client.send_command(SetVolumeCmd(volume=saved_speaker_volume))
+                logger.info(f"Restored robot speaker volume to {saved_speaker_volume}")
+            except Exception as e:
+                logger.debug(f"Error restoring speaker volume during shutdown: {e}")
         if camera_worker:
             camera_worker.stop()
 
