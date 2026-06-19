@@ -1,4 +1,3 @@
-import os
 import json
 import time
 import uuid
@@ -26,6 +25,7 @@ from openai.types.realtime import (
 from websockets.exceptions import ConnectionClosedError
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
 
+from reachy_mini_conversation_app import sounds
 from reachy_mini_conversation_app.tools import core_tools
 from reachy_mini_conversation_app.config import (
     config,
@@ -666,10 +666,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         if media is None:
             logger.debug("[DREAM] No media device available; skipping chime %s.", filename)
             return
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds", filename)
         try:
             # play_sound blocks until the clip is queued/played, so offload it.
-            await asyncio.to_thread(media.play_sound, path)
+            await asyncio.to_thread(sounds.play, media, filename)
         except Exception:
             logger.warning("[DREAM] Failed to play chime %s.", filename, exc_info=True)
 
