@@ -510,6 +510,11 @@ def refresh_runtime_config_from_env() -> None:
     config.HF_HOME = os.getenv("HF_HOME", "./cache")
     config.LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     config.HF_TOKEN = os.getenv("HF_TOKEN")
+    config.MEMORY_ENABLED = _env_flag("REACHY_MINI_MEMORY_ENABLED", default=True)
+    data_dir_env = os.getenv("REACHY_MINI_DATA_DIRECTORY")
+    config.DATA_DIRECTORY = Path(data_dir_env) if data_dir_env else Path.home() / ".reachy_mini" / "data"
+    config.MEMORY_DREAMER_MODEL = os.getenv("MEMORY_DREAMER_MODEL") or None
+    config.MEMORY_DREAMER_REFLECTION = _env_flag("MEMORY_DREAMER_REFLECTION", default=False)
     config.REACHY_MINI_CUSTOM_PROFILE = LOCKED_PROFILE or os.getenv("REACHY_MINI_CUSTOM_PROFILE")
 
 
