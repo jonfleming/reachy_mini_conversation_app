@@ -15,11 +15,6 @@ from reachy_mini_conversation_app.memory.dreamer import (
 from reachy_mini_conversation_app.memory.memory_manager import MemoryManager
 
 
-# ---------------------------------------------------------------------------
-# Scripted fake OpenAI client
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class _FakeResponses:
     """Scripted stand-in for ``client.responses``.
@@ -70,11 +65,6 @@ def _call_item(name: str, args: dict[str, Any], call_id: str = "c1") -> dict[str
     }
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def manager(tmp_path: Path) -> MemoryManager:
     """Create a fresh MemoryManager and queue one non-live log to dream on."""
@@ -89,11 +79,6 @@ def manager(tmp_path: Path) -> MemoryManager:
         encoding="utf-8",
     )
     return mgr
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 class TestDreamerSingleLog:
@@ -117,8 +102,6 @@ class TestDreamerSingleLog:
                 )
             ],
             [_msg_item("Wrote one identity memory.")],
-            # Self-reflection call
-            [_msg_item("All good.")],
         ]
         fake = _FakeClient(responses=_FakeResponses(on_create=lambda _i: steps.pop(0)))
         dreamer = Dreamer(manager, model="fake-model", client=fake)
@@ -130,10 +113,8 @@ class TestDreamerSingleLog:
         assert len(stats.llm_durations_s) >= 1
         assert stats.tool_total_s >= 0.0
         assert stats.errors == []
-        # File moved out of pending
         assert not (manager.pending_logs_dir / "2026-04-14_09-15.log").exists()
         assert (manager._processed_logs_dir / "2026-04-14_09-15.log").is_file()
-        # Memory file and index exist
         memory_file = manager.memories_dir / "2026-04-14_user-name_a01.md"
         assert memory_file.is_file()
         assert manager.active_memory_path.read_text(encoding="utf-8").count("[2026-04-14_user-name_a01]") == 1
@@ -160,7 +141,6 @@ class TestDreamerSingleLog:
                 )
             ],
             [_msg_item("Enriched existing memory.")],
-            [_msg_item("Reflection.")],
         ]
         fake = _FakeClient(responses=_FakeResponses(on_create=lambda _i: steps.pop(0)))
         Dreamer(manager, model="fake-model", client=fake).run()
@@ -185,13 +165,11 @@ class TestDreamerSingleLog:
                 )
             ],
             [_msg_item("Giving up.")],
-            [_msg_item("Reflection.")],
         ]
         fake = _FakeClient(responses=_FakeResponses(on_create=lambda _i: steps.pop(0)))
         [stats] = Dreamer(manager, model="fake-model", client=fake).run()
 
         assert stats.errors
-        # Left in pending on failure
         assert (manager.pending_logs_dir / "2026-04-14_09-15.log").is_file()
 
     def test_empty_pending_skips_llm(self, tmp_path: Path) -> None:

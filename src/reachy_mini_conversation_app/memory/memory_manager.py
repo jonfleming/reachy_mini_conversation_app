@@ -1,17 +1,4 @@
-"""Memory manager for Reachy Mini conversation app.
-
-Storage layout::
-
-    $DATA_DIRECTORY/memory/
-    ├── active_memory.md              # Rendered index, injected into system prompt
-    ├── memories/                     # One atomic memory per file
-    │   └── YYYY-MM-DD_<slug>_<hex3>.md
-    └── logs/
-        ├── pending/                  # Live log + logs waiting to be dreamed
-        └── processed/                # Logs already dreamed
-
-See ``docs/memory-system-design.md``.
-"""
+"""On-disk memory storage for the Reachy Mini conversation app."""
 
 from __future__ import annotations
 import os
@@ -33,9 +20,7 @@ from reachy_mini_conversation_app.memory.frontmatter import (
 logger = logging.getLogger(__name__)
 
 ALLOWED_KINDS = {"fact", "preference", "event", "skill", "relationship", "goal", "other"}
-# date_<slug>_<3-hex>. Slug may contain a–z, 0–9, hyphens, underscores; must
-# start with an alphanumeric character. The 3-hex suffix makes the split
-# unambiguous since ``[0-9a-f]{3}`` is always the last token.
+# The 3-hex suffix keeps the slug/date split unambiguous.
 _MEMORY_ID_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9][a-z0-9_-]*_[0-9a-f]{3}$")
 
 
@@ -43,12 +28,7 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _iso(ts: datetime) -> str:
-    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _atomic_write(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` atomically (temp file + os.replace)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -66,7 +46,6 @@ def _atomic_write(path: Path, content: str) -> None:
 
 
 def _one_line_summary(body: str) -> str:
-    """Extract a short, single-line summary from a memory body for the index."""
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or stripped.startswith("---"):
@@ -76,18 +55,10 @@ def _one_line_summary(body: str) -> str:
 
 
 class MemoryManager:
-    """Owns on-disk memory storage for the conversation app.
-
-    Responsibilities:
-      - Append conversation transcripts to the live session log (``logs/pending/``).
-      - Provide CRUD-style primitives the dreamer uses on ``memories/*.md``.
-      - Rebuild ``active_memory.md`` from frontmatters.
-      - Expose a session-scoped invariant: the dreamer must never read or move
-        the file at ``_session_log_path`` while it is being written to.
-    """
+    """Owns on-disk memory storage for the conversation app."""
 
     def __init__(self, data_dir: Path) -> None:
-        """Initialize memory under ``data_dir`` and run fresh-start migration."""
+        """Initialize memory under ``data_dir``."""
         self._data_dir = data_dir
         self._memory_dir = data_dir / "memory"
         self._active_path = self._memory_dir / "active_memory.md"
@@ -103,10 +74,6 @@ class MemoryManager:
         self._start_session_log()
         logger.info("MemoryManager initialized: data_dir=%s", data_dir)
 
-    # ------------------------------------------------------------------
-    # Paths and filesystem bring-up
-    # ------------------------------------------------------------------
-
     def _ensure_dirs(self) -> None:
         for d in (
             self._memory_dir,
@@ -118,16 +85,6 @@ class MemoryManager:
             d.mkdir(parents=True, exist_ok=True)
 
     def _migrate_legacy_layout(self) -> None:
-        """Idempotent fresh-start migration from the old two-tier layout.
-
-        - Move any ``logs/*.log`` (old top-level logs) into ``logs/pending/``.
-        - Remove any legacy ``archive/`` directory.
-
-        Runs on every construction, so it must stay idempotent. It deliberately
-        leaves ``active_memory.md`` alone: that file is the index injected into the
-        system prompt and must persist across restarts [``_ensure_index`` rebuilds it
-        if it is ever missing].
-        """
         moved = 0
         for entry in self._logs_dir.iterdir():
             if entry.is_file() and entry.suffix == ".log":
@@ -149,30 +106,17 @@ class MemoryManager:
                 logger.warning("Failed to remove legacy archive/: %s", e)
 
     def _ensure_index(self) -> None:
-        """Guarantee ``active_memory.md`` exists when there are memories to index.
-
-        The index is normally rebuilt at the end of each dream pass, but dreaming
-        only runs when there are pending logs. If the index is missing (fresh
-        install with copied memories, manual deletion, or a legacy upgrade) yet
-        memory files exist, rebuild it now from frontmatter — cheap, no LLM — so
-        the very next session still gets its summary injected into the prompt.
-        """
         if self._active_path.exists():
             return
         if not any(self._memories_dir.glob("*.md")):
             return
         try:
-            # Local import avoids a module-load cycle (index_renderer is leaf-level).
             from reachy_mini_conversation_app.memory.index_renderer import rebuild_index
 
             rebuild_index(self)
             logger.info("Rebuilt missing active_memory.md from existing memories.")
         except Exception as e:
             logger.warning("Failed to rebuild missing active_memory.md: %s", e)
-
-    # ------------------------------------------------------------------
-    # Session lifecycle
-    # ------------------------------------------------------------------
 
     def new_session(self) -> None:
         """Rotate the live session log file."""
@@ -183,12 +127,6 @@ class MemoryManager:
         )
 
     def _start_session_log(self) -> None:
-        """Reserve a session log path under logs/pending/ without writing it.
-
-        The file is created lazily on the first append (see ``_append_log``).
-        Boots that never produce conversation leave nothing behind, so the
-        dreamer doesn't waste an LLM call processing an empty stub.
-        """
         now = _now_utc()
         base = now.strftime("%Y-%m-%d_%H-%M")
         path = self._pending_logs_dir / f"{base}.log"
@@ -199,12 +137,7 @@ class MemoryManager:
         self._session_log_path = path
         self._session_log_header = f"--- session {now.strftime('%Y-%m-%d %H:%M')} UTC ---\n\n"
 
-    # ------------------------------------------------------------------
-    # Live log append (same as before, just targeted at pending/)
-    # ------------------------------------------------------------------
-
     def _append_log(self, line: str) -> None:
-        """Append a plain-text line to the current session log."""
         if self._session_log_path is None:
             return
         try:
@@ -234,10 +167,6 @@ class MemoryManager:
         result_str = json.dumps(result or {}, ensure_ascii=False)
         self._append_log(f"{ts} tool: {tool_name}({args_str}) -> {result_str}")
 
-    # ------------------------------------------------------------------
-    # Log inspection (used by the dreamer)
-    # ------------------------------------------------------------------
-
     def read_current_session_log(self) -> str:
         """Return the whole current session log, or empty string if none."""
         if self._session_log_path is None or not self._session_log_path.exists():
@@ -249,12 +178,7 @@ class MemoryManager:
             return ""
 
     def list_pending_logs(self, exclude_session: bool = True) -> list[str]:
-        """Return pending log filenames in chronological order (oldest first).
-
-        If ``exclude_session`` is True (the default), the currently-open
-        live log file is skipped — this is the invariant the dreamer relies
-        on.
-        """
+        """Return pending log filenames in chronological order."""
         try:
             names = sorted(p.name for p in self._pending_logs_dir.glob("*.log"))
         except OSError:
@@ -272,10 +196,7 @@ class MemoryManager:
         return path.read_text(encoding="utf-8")
 
     def mark_log_processed(self, filename: str) -> None:
-        """Move ``logs/pending/<filename>`` to ``logs/processed/<filename>``.
-
-        Refuses to move the currently-open live session log.
-        """
+        """Move a pending log to processed logs."""
         if self._session_log_path is not None and filename == self._session_log_path.name:
             raise RuntimeError(f"cannot mark active session log as processed: {filename}")
         src = self._pending_logs_dir / filename
@@ -283,10 +204,6 @@ class MemoryManager:
         if not src.is_file():
             raise FileNotFoundError(f"pending log not found: {filename}")
         shutil.move(str(src), str(dst))
-
-    # ------------------------------------------------------------------
-    # Atomic memory files (CRUD)
-    # ------------------------------------------------------------------
 
     def _memory_path(self, memory_id: str) -> Path:
         if not _MEMORY_ID_PATTERN.match(memory_id):
@@ -339,7 +256,7 @@ class MemoryManager:
             raise ValueError(f"invalid kind: {kind!r}. One of {sorted(ALLOWED_KINDS)}")
         meta: dict[str, Any] = {
             "id": memory_id,
-            "created": _iso(created or _now_utc()),
+            "created": (created or _now_utc()).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "sources": list(sources or []),
             "kind": kind,
             "tags": list(tags),
@@ -378,12 +295,7 @@ class MemoryManager:
         kind: str | None = None,
         include_superseded: bool = False,
     ) -> list[dict[str, Any]]:
-        """List memory summaries, optionally filtered by tag and/or kind.
-
-        Each entry is ``{id, summary, tags, kind, pinned, created, sources, superseded_by}``.
-        Dropped from default output: any memory with a non-null ``superseded_by`` —
-        the replacement is what the dreamer (and live LLM) care about.
-        """
+        """List memory summaries, optionally filtered by tag and/or kind."""
         out: list[dict[str, Any]] = []
         for path in sorted(self._memories_dir.glob("*.md")):
             try:
@@ -422,22 +334,7 @@ class MemoryManager:
         limit: int = 10,
         body_preview_chars: int = 0,
     ) -> list[dict[str, Any]]:
-        """Rank memories by how many substring matches they get for ``query``/``tags``.
-
-        Scoring is plain case-insensitive substring containment over a
-        per-memory haystack built from ``id``, ``tags``, ``kind``, the
-        one-line summary, and the full body. No fuzzy matching, no
-        embeddings — just ``needle in haystack``.
-
-        When ``body_preview_chars`` > 0, each result carries a
-        ``body_preview`` field — the first N characters of the body —
-        so the dreamer can decide whether it needs a follow-up
-        ``read_memory`` call at all. 0 omits the field, matching the
-        original behaviour.
-
-        Returns up to ``limit`` entries, ranked by descending score.
-        Same shape as :py:meth:`list_memories` plus a ``score`` field.
-        """
+        """Rank memories by substring matches over query and tags."""
         needles: list[str] = []
         if query:
             needles.extend(tok for tok in query.lower().split() if tok)
@@ -489,10 +386,6 @@ class MemoryManager:
         scored.sort(key=lambda sc: (-sc[0], sc[1]["id"]))
         return [entry for _, entry in scored[: max(1, limit)]]
 
-    # ------------------------------------------------------------------
-    # Prompt injection
-    # ------------------------------------------------------------------
-
     def get_memory_block(self) -> str:
         """Return the formatted memory block for system prompt injection."""
         if not self._active_path.exists():
@@ -513,30 +406,25 @@ class MemoryManager:
             + content
         )
 
-    # ------------------------------------------------------------------
-    # Path accessors (used by dreamer and tests)
-    # ------------------------------------------------------------------
-
     @property
     def memories_dir(self) -> Path:
-        """Return the on-disk directory containing atomic memory files."""
+        """Return the memory-file directory."""
         return self._memories_dir
 
     @property
     def active_memory_path(self) -> Path:
-        """Return the on-disk path to the rendered index file."""
+        """Return the rendered index path."""
         return self._active_path
 
     @property
     def pending_logs_dir(self) -> Path:
-        """Return the on-disk directory containing pending (not-yet-dreamed) logs."""
+        """Return the pending-log directory."""
         return self._pending_logs_dir
 
     @property
     def session_log_path(self) -> Path | None:
-        """Return the path of the currently-open live log, or None."""
+        """Return the current live log path, if any."""
         return self._session_log_path
 
     def _atomic_write_active(self, content: str) -> None:
-        """Write ``content`` atomically to active_memory.md. Used by index rendering."""
         _atomic_write(self._active_path, content)

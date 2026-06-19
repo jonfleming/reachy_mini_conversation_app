@@ -1,14 +1,4 @@
-"""Event-date helpers for memories.
-
-A memory's date is the date of the conversation(s) it was drawn from [parsed from
-its ``sources`` log filenames, ``YYYY-MM-DD_HH-MM.log``], not the date the dreamer
-happened to write the file (``created``). A single memory can span several
-conversations on different days, so it has potentially many event dates; the
-``created`` timestamp is only a last-resort fallback when no source date is parseable.
-
-This is the one place that defines "when a memory happened", used by the index
-renderer (grouping/ordering) and by ``recall_memories`` (filtering/sorting).
-"""
+"""Event-date helpers for memories."""
 
 from __future__ import annotations
 import re
@@ -16,7 +6,6 @@ from typing import Any
 from datetime import datetime, timezone
 
 
-# Log filenames start with the conversation date, e.g. "2026-04-17_14-37.log".
 _LOG_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 
 
@@ -57,11 +46,7 @@ def source_dates(memory: dict[str, Any]) -> list[datetime]:
 
 
 def event_date(memory: dict[str, Any]) -> datetime | None:
-    """Return the representative event date (the most recent conversation date).
-
-    Falls back to ``created`` only when no source date is parseable. Used for
-    ordering and for the Recent/Older split in the index.
-    """
+    """Return the most recent conversation date, falling back to ``created``."""
     dates = source_dates(memory)
     if dates:
         return max(dates)
@@ -74,12 +59,7 @@ def event_dates(memory: dict[str, Any]) -> list[str]:
 
 
 def present_memory(mem: dict[str, Any]) -> dict[str, Any]:
-    """Model-facing view of a ``read_memory`` result (``{id, frontmatter, body}``).
-
-    Drops the dreamer's ``created`` timestamp [which the model could mistake for
-    when the conversation happened] and adds ``dates_discussed`` (the actual
-    conversation dates), so the only dates the model ever sees are the real ones.
-    """
+    """Return the model-facing view of a stored memory."""
     frontmatter = dict(mem.get("frontmatter") or {})
     discussed = event_dates({"sources": frontmatter.get("sources")})
     frontmatter.pop("created", None)

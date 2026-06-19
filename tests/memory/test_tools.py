@@ -25,11 +25,6 @@ def _mid(slug: str, hex3: str = "abc", date: str = "2026-04-17") -> str:
     return f"{date}_{slug}_{hex3}"
 
 
-# ------------------------------------------------------------------
-# recall_memory
-# ------------------------------------------------------------------
-
-
 class TestRecallMemory:
     """Verify recall_memory returns bundled target + related memories."""
 
@@ -97,11 +92,6 @@ class TestRecallMemory:
         result = await RecallMemory()(deps, id=mid)
         assert "created" not in result["memory"]["frontmatter"]
         assert result["memory"]["dates_discussed"] == ["2026-04-17", "2026-05-05"]
-
-
-# ------------------------------------------------------------------
-# recall_memories
-# ------------------------------------------------------------------
 
 
 class TestRecallMemories:

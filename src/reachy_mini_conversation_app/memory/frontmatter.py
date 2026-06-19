@@ -1,12 +1,4 @@
-"""Minimal YAML-like frontmatter parser for atomic memory files.
-
-Memory files start with a '---' fence, a sequence of ``key: value`` lines
-(with values limited to strings, quoted strings, booleans, nulls, and simple
-``[...]`` lists), then '---', then the markdown body.
-
-Kept intentionally small and external-dep-free; the dreamer writes these
-files, so the format is under our control.
-"""
+"""Minimal YAML-like frontmatter parser for atomic memory files."""
 
 from __future__ import annotations
 from typing import Any
@@ -16,7 +8,6 @@ FRONTMATTER_FENCE = "---"
 
 
 def _parse_scalar(raw: str) -> Any:
-    """Parse a scalar YAML value into a Python value."""
     value = raw.strip()
     if not value:
         return ""
@@ -32,7 +23,6 @@ def _parse_scalar(raw: str) -> Any:
 
 
 def _parse_inline_list(raw: str) -> list[Any]:
-    """Parse a ``[a, b, c]`` list. Does not support nested lists/dicts."""
     value = raw.strip()
     if not (value.startswith("[") and value.endswith("]")):
         raise ValueError(f"expected inline list, got: {raw!r}")
@@ -43,11 +33,7 @@ def _parse_inline_list(raw: str) -> list[Any]:
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    """Split a memory file into (frontmatter dict, body string).
-
-    Raises ValueError on malformed input. An absent frontmatter fence
-    returns ``({}, text)``.
-    """
+    """Split a memory file into frontmatter and body."""
     lines = text.splitlines()
     if not lines or lines[0].strip() != FRONTMATTER_FENCE:
         return {}, text
@@ -81,7 +67,6 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def _dump_scalar(value: Any) -> str:
-    """Serialize a Python scalar back to YAML-ish form."""
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -96,7 +81,7 @@ def _dump_scalar(value: Any) -> str:
 
 
 def dump_frontmatter(meta: dict[str, Any], body: str) -> str:
-    """Serialize a frontmatter dict + body back to the canonical text form."""
+    """Serialize frontmatter and body."""
     lines = [FRONTMATTER_FENCE]
     for key, value in meta.items():
         if isinstance(value, list):

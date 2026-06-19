@@ -1,14 +1,4 @@
-"""Background dream runner.
-
-Runs ``Dreamer.run()`` on a daemon thread during the conversation so memory
-consolidation never blocks startup. The scheduler is framework-agnostic: it knows
-nothing about audio or the realtime connection. It only calls two callbacks,
-``on_start`` (just before the dream begins) and ``on_finish`` (once it ends, always,
-even on error). The realtime backend wires those to the subtle chime and the hidden
-"you just dreamed" context note [see ``base_realtime.py``].
-
-See ``docs/memory-system-design.md``.
-"""
+"""Background dream runner."""
 
 from __future__ import annotations
 import logging
@@ -46,16 +36,7 @@ class DreamSummary:
 
 
 class DreamScheduler:
-    """Run a dream pass on a daemon thread, bracketed by start/finish callbacks.
-
-    Usage::
-
-        scheduler = DreamScheduler(
-            memory_manager, model="gpt-5.4", api_key=KEY,
-            on_start=play_start_chime, on_finish=play_end_chime,
-        )
-        scheduler.start()  # returns immediately; dream runs in the background
-    """
+    """Run a dream pass on a daemon thread."""
 
     def __init__(
         self,
@@ -81,11 +62,7 @@ class DreamScheduler:
         self._thread: threading.Thread | None = None
 
     def start(self) -> bool:
-        """Spawn the dream thread if there is anything to dream about.
-
-        Returns ``True`` if a thread was started, ``False`` if skipped (already
-        running, or no pending logs). Never raises.
-        """
+        """Start the dream thread, or return False when skipped."""
         if self._thread is not None and self._thread.is_alive():
             logger.info("[DREAM] A dream is already running; not starting another.")
             return False
@@ -105,7 +82,6 @@ class DreamScheduler:
         return self._thread is not None and self._thread.is_alive()
 
     def _run(self) -> None:
-        """Thread body: on_start, run the dreamer, then always on_finish."""
         try:
             self._on_start()
         except Exception:
@@ -113,7 +89,16 @@ class DreamScheduler:
 
         summary = DreamSummary(errored=True)
         try:
-            dreamer = self._dreamer_factory() if self._dreamer_factory else self._build_dreamer()
+            if self._dreamer_factory:
+                dreamer = self._dreamer_factory()
+            else:
+                dreamer = Dreamer(
+                    self._manager,
+                    model=self._model,
+                    api_key=self._api_key,
+                    base_url=self._base_url,
+                    self_reflect=self._self_reflect,
+                )
             stats = dreamer.run()
             summary = DreamSummary.from_stats(stats)
             logger.info(
@@ -129,12 +114,3 @@ class DreamScheduler:
                 self._on_finish(summary)
             except Exception:
                 logger.exception("[DREAM] on_finish callback raised.")
-
-    def _build_dreamer(self) -> Dreamer:
-        return Dreamer(
-            self._manager,
-            model=self._model,
-            api_key=self._api_key,
-            base_url=self._base_url,
-            self_reflect=self._self_reflect,
-        )

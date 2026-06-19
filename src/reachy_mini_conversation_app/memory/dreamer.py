@@ -1,17 +1,4 @@
-"""Dreaming agent: offline memory consolidation.
-
-The dreamer runs in the background during a conversation, on a daemon thread
-[see ``DreamScheduler``]. It walks through every log in ``logs/pending/``, calls
-an LLM with dedicated tools, and lets the LLM create/update/merge atomic memory
-files. After every log it rebuilds the index. At the end of the run it asks the
-LLM to reflect on its own work.
-
-The conversation LLM never sees any of this; it simply inherits the curated
-memory state, refreshed between sessions.
-
-Every tool call, every LLM input/output, and every per-log statistic is
-printed to the terminal logger. See ``docs/memory-system-design.md``.
-"""
+"""Offline memory consolidation for Reachy Mini conversations."""
 
 from __future__ import annotations
 import os
@@ -34,18 +21,12 @@ from reachy_mini_conversation_app.memory.memory_manager import (
 logger = logging.getLogger(__name__)
 
 
-# OPENAI_MODEL_NAME is typically a realtime alias ("gpt-realtime") that doesn't
-# exist on the Responses API the dreamer uses. Don't fall back to it; use a
-# chat-capable default instead.
+# Realtime aliases do not work on the Responses API.
 DEFAULT_DREAMER_MODEL = "gpt-5.4"
 
 
 class DreamerAuthError(RuntimeError):
-    """The dreamer's endpoint rejected the credentials (no OpenAI Responses access).
-
-    Raised so the whole dream pass aborts at once instead of re-failing on every
-    pending log; the live conversation is unaffected.
-    """
+    """The dreamer's endpoint rejected the configured credentials."""
 
 
 DREAMER_SYSTEM_PROMPT = """\
@@ -142,7 +123,7 @@ only the *voice* changes, not the evidence.
 
 ## Workflow for each log
 
-1. Read the log with `read_log(filename)`.
+1. Read the pending log contents included in the user message.
 2. Check for overlap with `find_related_memories(query=...)` — one call is
    usually enough; fall back to `list_existing_memories(tag=...)` only if
    you need a strictly tag-filtered view.
@@ -181,27 +162,7 @@ sessions. It is NOT stored in memory and NOT acted on automatically.
 """
 
 
-# ---------------------------------------------------------------------------
-# Tool spec + dispatcher
-# ---------------------------------------------------------------------------
-
-
 DREAMER_TOOL_SPECS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "name": "read_log",
-        "description": "Read the full text of a pending conversation log.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Filename from the pending list, e.g. 2026-04-15_21-04.log",
-                },
-            },
-            "required": ["filename"],
-        },
-    },
     {
         "type": "function",
         "name": "list_existing_memories",
@@ -338,16 +299,7 @@ DREAMER_TOOL_SPECS: list[dict[str, Any]] = [
 
 @dataclass
 class DreamLogStats:
-    """Per-log runtime statistics printed after every log.
-
-    Timing is split across three buckets:
-      - ``llm_durations_s`` — wall-clock of every ``responses.create()`` call.
-      - ``tool_durations_s[name]`` — list of wall-clock durations per tool.
-      - ``duration_s`` — total wall-clock for the log (LLM + tools + overhead).
-
-    ``overhead_s`` is whatever wall-clock isn't accounted for by the LLM or
-    tool buckets (prompt building, bookkeeping). Expected to be small.
-    """
+    """Per-log runtime statistics."""
 
     filename: str
     duration_s: float = 0.0
@@ -404,17 +356,7 @@ class DreamLogStats:
 
 
 class Dreamer:
-    """LLM-driven memory consolidation runner.
-
-    Usage::
-
-        dreamer = Dreamer(manager, model="gpt-5.4", api_key=OPENAI_API_KEY)
-        dreamer.run()
-
-    The runner is sync and uses OpenAI's sync ``responses`` API, matching the
-    s2s pipeline pattern. It runs on a background thread during the conversation
-    (see ``DreamScheduler``), so the blocking calls never touch the event loop.
-    """
+    """LLM-driven memory consolidation runner."""
 
     def __init__(
         self,
@@ -427,20 +369,12 @@ class Dreamer:
         max_tool_calls_per_log: int = 40,
         self_reflect: bool = False,
     ) -> None:
-        """Initialize the dreamer. Pass ``client`` in tests to bypass OpenAI.
-
-        ``self_reflect`` enables a dev-only end-of-run reflection LLM call that only
-        prints to the terminal; off by default so production pays no extra cost.
-        """
+        """Initialize the dreamer."""
         self.manager = manager
         self.model = model
         self.max_tool_calls_per_log = max_tool_calls_per_log
         self.self_reflect = self_reflect
         self.client = client if client is not None else OpenAI(api_key=api_key, base_url=base_url)
-
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
 
     def run(self) -> list[DreamLogStats]:
         """Run a full dream pass and return the per-log stats list."""
@@ -490,10 +424,6 @@ class Dreamer:
         logger.info("[DREAM] Dream pass finished in %.1fs.", total)
         return stats_list
 
-    # ------------------------------------------------------------------
-    # Per-log loop
-    # ------------------------------------------------------------------
-
     def _process_one_log(self, filename: str) -> DreamLogStats:
         stats = DreamLogStats(filename=filename)
         t0 = time.monotonic()
@@ -505,10 +435,7 @@ class Dreamer:
             stats.duration_s = time.monotonic() - t0
             return stats
 
-        # Skip logs with no conversational content (header-only stubs or
-        # truly empty files left over from aborted sessions). A real turn is
-        # logged as "HH:MM:SS role: ..." so the absence of any timestamped
-        # line means nothing worth consolidating is in the file.
+        # Empty or aborted sessions should not spend an LLM call.
         if not re.search(r"^\d{2}:\d{2}:\d{2}\s+(user|assistant):", log_content, re.MULTILINE):
             logger.info(
                 "[DREAM] %s has no conversation turns; skipping LLM and marking processed.",
@@ -622,10 +549,6 @@ class Dreamer:
         stats.duration_s = time.monotonic() - t0
         return stats
 
-    # ------------------------------------------------------------------
-    # Tool dispatch
-    # ------------------------------------------------------------------
-
     def _dispatch_tool(
         self,
         call: dict[str, Any],
@@ -656,13 +579,6 @@ class Dreamer:
         stats.record_tool(name, elapsed)
         logger.debug("[DREAM] tool %s → %.3fs %s", name, elapsed, result)
         return result, "error" not in result
-
-    # Individual handlers ------------------------------------------------
-
-    def _tool_read_log(self, args: dict[str, Any], _: DreamLogStats) -> dict[str, Any]:
-        filename = args.get("filename") or ""
-        content = self.manager.read_pending_log(filename)
-        return {"filename": filename, "content": content}
 
     def _tool_list_existing_memories(self, args: dict[str, Any], _: DreamLogStats) -> dict[str, Any]:
         tag = args.get("tag") or None
@@ -732,10 +648,6 @@ class Dreamer:
         stats.updated += 1
         return {"status": "updated", "id": memory_id}
 
-    # ------------------------------------------------------------------
-    # Self-reflection
-    # ------------------------------------------------------------------
-
     def _self_reflection(self, stats_list: list[DreamLogStats], total_seconds: float) -> None:
         if not stats_list:
             return
@@ -768,10 +680,6 @@ class Dreamer:
         logger.info("[DREAM] --- Self-reflection ---\n%s", reflection or "(empty)")
         logger.info("[DREAM] --- End self-reflection ---")
 
-    # ------------------------------------------------------------------
-    # Response parsing helpers (tolerant of dicts and pydantic objects)
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _item_as_dict(item: Any) -> dict[str, Any]:
         if isinstance(item, dict):
@@ -796,11 +704,6 @@ class Dreamer:
         return "".join(chunks).strip()
 
 
-# ---------------------------------------------------------------------------
-# Convenience runner
-# ---------------------------------------------------------------------------
-
-
 def run_dream_pass(
     manager: MemoryManager,
     *,
@@ -810,12 +713,7 @@ def run_dream_pass(
     client: OpenAI | None = None,
     self_reflect: bool = False,
 ) -> list[DreamLogStats]:
-    """Run one dream pass and return the per-log stats list.
-
-    Model resolution: explicit ``model`` wins, then ``MEMORY_DREAMER_MODEL``, then
-    ``DEFAULT_DREAMER_MODEL``. (Not ``OPENAI_MODEL_NAME`` — that is a realtime alias
-    that does not work with the Responses API the dreamer uses.)
-    """
+    """Run one dream pass with an explicit, env, or default dreamer model."""
     resolved_model = model or os.getenv("MEMORY_DREAMER_MODEL") or DEFAULT_DREAMER_MODEL
     dreamer = Dreamer(
         manager,

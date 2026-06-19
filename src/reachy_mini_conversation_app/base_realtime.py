@@ -45,9 +45,6 @@ from reachy_mini_conversation_app.tools.background_tool_manager import (
 
 logger = logging.getLogger(__name__)
 
-# Hidden context notes injected when the background dream starts/finishes, so the
-# robot can explain the chime if asked ("what was that sound?") without ever
-# bringing it up on its own. See docs/memory-system-design.md.
 DREAM_START_NOTE: Final[str] = (
     "[Background event: a soft chime just played. Your memory-consolidation "
     '"dreaming" process started in the background — you are quietly reprocessing '
@@ -154,21 +151,17 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._voice_override: str | None = self._normalize_startup_voice(startup_voice)
         self._realtime_connect_query: dict[str, str] = {}
 
-        # Debouncing for partial transcripts
         self.partial_transcript_task: asyncio.Task[None] | None = None
         self.partial_debounce_delay = 0.5  # seconds
         self.input_transcript_chunks_by_item = InputTranscriptChunksByItem()
 
-        # Internal lifecycle flags
         self._connected_event: asyncio.Event = asyncio.Event()
 
-        # Background tool manager
         self.tool_manager = BackgroundToolManager()
 
         # Background memory consolidation ("dreaming"), launched per session.
         self._dream_scheduler: DreamScheduler | None = None
 
-        # Cost tracking
         self.cumulative_cost: float = 0.0
 
         # Response-in-progress guard: the Realtime API only allows one active
@@ -343,7 +336,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         Returns a short status message for UI feedback.
         """
         try:
-            # Update the in-process config value and env
             from reachy_mini_conversation_app.config import config as _config
             from reachy_mini_conversation_app.config import set_custom_profile
 
@@ -377,7 +369,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 except Exception as e:
                     logger.warning("Live update failed; will restart session: %s", e)
 
-                # Force a real restart to guarantee the new instructions/voice
                 try:
                     await self._restart_session()
                     return "Applied personality and restarted realtime session."
@@ -487,12 +478,10 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 finally:
                     self.connection = None
 
-            # Ensure we have a client (start_up must have run once)
             if getattr(self, "client", None) is None:
                 logger.warning("Cannot restart: realtime client not initialized yet.")
                 return
 
-            # Fire-and-forget new session and wait briefly for connection
             try:
                 self._connected_event.clear()
             except Exception:
@@ -596,17 +585,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                 sent = True
 
-    # ------------------------------------------------------------------
-    # Background dreaming (hidden memory consolidation)
-    # ------------------------------------------------------------------
-
     def _start_background_dreaming(self) -> None:
-        """Launch memory consolidation on a background thread for this session.
-
-        No-op when memory is disabled, no OpenAI key is configured, or there are
-        no pending logs. The dream runs in parallel with the conversation; a
-        subtle chime and a hidden context note mark its start and finish.
-        """
         memory_manager = self.deps.memory_manager
         if memory_manager is None:
             return
@@ -643,12 +622,10 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._dream_scheduler.start()
 
     async def _announce_dream_started(self) -> None:
-        """Play the start chime and tell the robot (silently) that it began dreaming."""
         await self._play_dream_chime("dream_start.wav")
         await self._inject_background_context(DREAM_START_NOTE)
 
     async def _announce_dream_finished(self, summary: DreamSummary) -> None:
-        """Play the finish chime and tell the robot (silently) that dreaming is done."""
         logger.info(
             "[DREAM] Announcing dream finished: %d log(s), created %d, updated %d, errored=%s.",
             summary.logs_processed,
@@ -660,7 +637,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         await self._inject_background_context(DREAM_FINISH_NOTE)
 
     async def _play_dream_chime(self, filename: str) -> None:
-        """Play a short chime via the robot speaker. Best-effort; never fatal."""
         robot = getattr(self.deps, "reachy_mini", None)
         media = getattr(robot, "media", None)
         if media is None:
@@ -673,12 +649,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             logger.warning("[DREAM] Failed to play chime %s.", filename, exc_info=True)
 
     async def _inject_background_context(self, text: str) -> None:
-        """Drop a hidden context note into the live conversation without forcing speech.
-
-        Mirrors ``send_idle_signal``'s item.create, but deliberately does NOT call
-        ``_safe_response_create`` afterwards — the note sits in context so the robot
-        can reference it if asked, but it never prompts the robot to speak.
-        """
         if not self.connection:
             logger.debug("[DREAM] No active connection; skipping context injection.")
             return
@@ -717,7 +687,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             tool_result = {"error": "No result returned from tool execution"}
             tool_result_for_model = tool_result
 
-        # Log tool call to conversation logs
         if self.deps.memory_manager is not None:
             try:
                 args = json.loads(bg_tool.args_json_str) if bg_tool.args_json_str else {}
@@ -729,7 +698,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                     exc_info=True,
                 )
 
-        # Connection may have closed while tool was running
         if not self.connection:
             logger.warning(
                 "Connection closed during tool '%s' (id=%s) execution; cannot send result back",
@@ -882,10 +850,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
             logger.info("Realtime session updated successfully")
 
-            # Reset the partial-transcript accumulator for each new session
             self.input_transcript_chunks_by_item = InputTranscriptChunksByItem()
 
-            # Reset per-turn tool-call coalescing state for the fresh session.
             self._tool_turn_response_id = None
             self._tool_turn_outstanding = 0
             self._tool_turn_calls_done = False
@@ -898,7 +864,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             except Exception:
                 pass
 
-            # Notify memory manager of new session
             if self.deps.memory_manager is not None:
                 self.deps.memory_manager.new_session()
                 # Consolidate previous sessions' logs in the background, in
@@ -907,10 +872,8 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
             response_sender_task: asyncio.Task[None] | None = None
             try:
-                # Start the background tool manager
                 self.tool_manager.start_up(tool_callbacks=[self._handle_tool_result])
 
-                # Start the response sender worker
                 response_sender_task = asyncio.create_task(self._response_sender_loop(), name="response-sender")
 
                 async for event in self.connection:
@@ -988,12 +951,10 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
                         await self._cancel_partial_transcript_task()
 
-                        # Start new debounce timer with the last delta
                         self.partial_transcript_task = asyncio.create_task(
                             self._emit_debounced_partial(current_partial, item_id, sequence_counter)
                         )
 
-                    # Handle completed transcription (user finished speaking)
                     if event.type == "conversation.item.input_audio_transcription.completed":
                         self.is_idle_tool_call = False
                         self._mark_activity("user_transcription_completed")
@@ -1016,7 +977,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         if self.deps.memory_manager is not None:
                             self.deps.memory_manager.log_turn("user", transcript)
 
-                    # Handle assistant transcription
                     if event.type == "response.output_audio_transcript.done":
                         self._mark_activity("assistant_transcript_done")
                         logger.debug(f"Assistant transcript: {event.transcript}")
@@ -1026,7 +986,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         if self.deps.memory_manager is not None:
                             self.deps.memory_manager.log_turn("assistant", event.transcript or "")
 
-                    # Handle audio delta
                     if event.type == "response.output_audio.delta":
                         decoded_pcm_bytes = base64.b64decode(event.delta)
                         decoded_pcm = np.frombuffer(decoded_pcm_bytes, dtype=np.int16).reshape(1, -1)
@@ -1041,7 +1000,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                                 decoded_pcm,
                             ),
                         )
-                    # ---- tool-calling plumbing ----
                     if event.type == "response.function_call_arguments.done":
                         self._mark_activity("tool_call_received")
                         tool_name = getattr(event, "name", None)
@@ -1140,7 +1098,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 # Stop background tool manager tasks (listener + cleanup) in all paths.
                 await self.tool_manager.shutdown()
 
-    # Microphone receive
     async def receive(self, frame: Tuple[int, NDArray[np.int16]]) -> None:
         """Receive audio frame from the microphone and send it to the realtime server.
 
@@ -1157,20 +1114,15 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
         input_sample_rate, audio_frame = frame
 
-        # Reshape if needed
         if audio_frame.ndim == 2:
-            # Scipy channels last convention
             if audio_frame.shape[1] > audio_frame.shape[0]:
                 audio_frame = audio_frame.T
-            # Multiple channels -> Mono channel
             if audio_frame.shape[1] > 1:
                 audio_frame = audio_frame[:, 0]
 
-        # Resample if needed
         if self.input_sample_rate != input_sample_rate:
             audio_frame = resample(audio_frame, int(len(audio_frame) * self.input_sample_rate / input_sample_rate))
 
-        # Cast if needed
         audio_frame = audio_to_int16(audio_frame)
 
         # Send to the realtime input buffer (guard against races during reconnect).
@@ -1183,10 +1135,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
     async def emit(self) -> Tuple[int, NDArray[np.int16]] | AdditionalOutputs | None:
         """Emit audio frame to be played by the speaker."""
-        # Sends output queued by the realtime event handler to the stream.
-        # This is called periodically by the fastrtc Stream
-
-        # Handle idle
         idle_duration = time.monotonic() - self.last_activity_time
         if idle_duration > 180.0 and self._response_done_event.is_set() and self.deps.movement_manager.is_idle():
             try:
@@ -1201,7 +1149,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
     async def shutdown(self) -> None:
         """Shutdown the handler."""
-        # Unblock the response sender worker so it can exit
         self._response_done_event.set()
 
         # Stop background tool manager tasks (listener + cleanup)
@@ -1219,7 +1166,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             finally:
                 self.connection = None
 
-        # Clear any remaining items in the output queue
         while not self.output_queue.empty():
             try:
                 self.output_queue.get_nowait()

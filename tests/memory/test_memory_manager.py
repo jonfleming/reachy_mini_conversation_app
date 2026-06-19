@@ -27,11 +27,6 @@ def _memory_id(slug: str = "demo", date: str = "2026-04-17", hex3: str = "abc") 
     return f"{date}_{slug}_{hex3}"
 
 
-# ------------------------------------------------------------------
-# Storage layout
-# ------------------------------------------------------------------
-
-
 class TestLayout:
     """Verify directory structure on init."""
 
@@ -56,11 +51,6 @@ class TestLayout:
 
         manager.log_turn("user", "trigger lazy creation")
         assert manager.session_log_path.exists()
-
-
-# ------------------------------------------------------------------
-# Migration
-# ------------------------------------------------------------------
 
 
 class TestMigration:
@@ -129,11 +119,6 @@ class TestMigration:
         assert not archive.exists()
 
 
-# ------------------------------------------------------------------
-# Session log
-# ------------------------------------------------------------------
-
-
 class TestSessionLog:
     """Verify live log write behaviour."""
 
@@ -174,11 +159,6 @@ class TestSessionLog:
         pending = manager.list_pending_logs()
         assert "2025-01-01_00-00.log" in pending
         assert manager.session_log_path.name not in pending  # type: ignore[union-attr]
-
-
-# ------------------------------------------------------------------
-# Memory CRUD
-# ------------------------------------------------------------------
 
 
 class TestMemoryFiles:
@@ -281,11 +261,6 @@ class TestMemoryFiles:
         assert entry["summary"] == "User prefers Queen's Gambit."
 
 
-# ------------------------------------------------------------------
-# find_related_memories
-# ------------------------------------------------------------------
-
-
 class TestFindRelatedMemories:
     """Verify the substring-ranking search used by the dreamer."""
 
@@ -364,11 +339,6 @@ class TestFindRelatedMemories:
         assert "body_preview" not in result
 
 
-# ------------------------------------------------------------------
-# Log processed move
-# ------------------------------------------------------------------
-
-
 class TestMarkLogProcessed:
     """Verify move pending -> processed."""
 
@@ -385,11 +355,6 @@ class TestMarkLogProcessed:
         active = manager.session_log_path.name  # type: ignore[union-attr]
         with pytest.raises(RuntimeError):
             manager.mark_log_processed(active)
-
-
-# ------------------------------------------------------------------
-# Index rendering
-# ------------------------------------------------------------------
 
 
 class TestIndexRenderer:
@@ -506,11 +471,6 @@ class TestIndexRenderer:
         rendered = rebuild_index(manager)
         assert manager.active_memory_path.read_text(encoding="utf-8") == rendered
         assert "chess" in rendered.lower()
-
-
-# ------------------------------------------------------------------
-# Prompt injection
-# ------------------------------------------------------------------
 
 
 class TestMemoryBlock:
