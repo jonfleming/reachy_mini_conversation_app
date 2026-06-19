@@ -1,13 +1,7 @@
-"""Bidirectional local audio stream with optional settings UI.
+"""Bidirectional local audio stream with optional web settings UI.
 
-In headless mode, there is no Gradio UI. If the selected backend is missing
-its required API key, we expose a minimal settings page via the Reachy Mini
-Apps settings server so users can pick a backend and provide any missing
-credentials.
-
-The settings UI is served from this package's ``static/`` folder. It persists
-the selected backend and any provided API keys into the app instance's ``.env``
-file when available.
+If the selected backend is missing its required API key, a settings page is
+served via the Reachy Mini Apps settings server so users can configure it.
 """
 
 import os
@@ -15,8 +9,10 @@ import sys
 import time
 import asyncio
 import logging
+import threading
 from typing import List, Optional
 from pathlib import Path
+from collections.abc import Callable, AsyncGenerator
 
 from fastrtc import AdditionalOutputs, audio_to_float32
 from scipy.signal import resample
@@ -41,29 +37,120 @@ from reachy_mini_conversation_app.config import (
     parse_hf_direct_target,
     get_model_name_for_backend,
     get_hf_connection_selection,
+    get_default_voice_for_backend,
     refresh_runtime_config_from_env,
+    get_available_voices_for_backend,
 )
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
+from reachy_mini_conversation_app.personality_routes import mount_personality_routes
 from reachy_mini_conversation_app.audio.startup_config import apply_audio_startup_config
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
-from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
 
 
 try:
     # FastAPI is provided by the Reachy Mini Apps runtime
-    from fastapi import FastAPI, Response
+    from fastapi import FastAPI, Request, Response
     from pydantic import BaseModel
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
     from starlette.staticfiles import StaticFiles
 except Exception:  # pragma: no cover - only loaded when settings_app is used
     FastAPI = object  # type: ignore
     FileResponse = object  # type: ignore
     JSONResponse = object  # type: ignore
+    StreamingResponse = object  # type: ignore
     StaticFiles = object  # type: ignore
     BaseModel = object  # type: ignore
-
+    Request = object  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+_SSE_KEEPALIVE_INTERVAL_SECONDS = 15.0  # below typical 60s proxy idle timeout
+
+
+def _detach_framework_root_routes(app: "FastAPI") -> None:
+    """Strip framework-registered GET / and /static routes so ours aren't silently shadowed."""
+    routes = getattr(app, "router", None)
+    routes = getattr(routes, "routes", None) if routes else getattr(app, "routes", None)
+    if routes is None:
+        return
+    survivors = []
+    for route in routes:
+        path = getattr(route, "path", None)
+        if path in ("/", "/static"):
+            logger.debug("detaching framework-provided route %r (%s)", path, type(route).__name__)
+            continue
+        survivors.append(route)
+    routes[:] = survivors
+
+
+class ConversationEventBus:
+    """Thread-safe fan-out bus that delivers conversation activity events to SSE subscribers."""
+
+    MAX_QUEUE_SIZE = 64
+
+    def __init__(self) -> None:
+        """Initialize the bus."""
+        # Each entry is (loop, queue); loop captured at subscribe() time for cross-thread delivery.
+        self._subscribers: list[tuple[asyncio.AbstractEventLoop, "asyncio.Queue[str]"]] = []
+        self._lock = threading.Lock()
+
+    def subscribe(self) -> tuple["asyncio.Queue[str]", Callable[[], None]]:
+        """Return a per-subscriber queue and its unsubscribe callback. Must be called from a coroutine."""
+        loop = asyncio.get_running_loop()
+        queue: "asyncio.Queue[str]" = asyncio.Queue(maxsize=self.MAX_QUEUE_SIZE)
+        entry = (loop, queue)
+        with self._lock:
+            self._subscribers.append(entry)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                try:
+                    self._subscribers.remove(entry)
+                except ValueError:
+                    pass
+
+        return queue, unsubscribe
+
+    def publish(self, event: str) -> None:
+        """Broadcast to all subscribers via call_soon_threadsafe. Drops events for full or closed queues."""
+        with self._lock:
+            snapshot = list(self._subscribers)
+        for loop, queue in snapshot:
+            try:
+                loop.call_soon_threadsafe(self._enqueue_safely, queue, event)
+            except RuntimeError:
+                pass  # loop closed; subscriber will clean itself up on disconnect
+
+    @staticmethod
+    def _enqueue_safely(queue: "asyncio.Queue[str]", event: str) -> None:
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.debug("conversation event dropped (subscriber queue full): %s", event)
+
+
+async def _conversation_events_stream(
+    bus: ConversationEventBus,
+    request: "Request",
+) -> "AsyncGenerator[str, None]":
+    """Yield SSE lines for one subscriber; emits keep-alive comments during idle periods."""
+    queue, unsubscribe = bus.subscribe()
+    try:
+        yield "retry: 2000\n\n"
+        yield "event: ready\ndata: connected\n\n"
+
+        while True:
+            if await request.is_disconnected():
+                return
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            yield f"event: activity\ndata: {event}\n\n"
+    finally:
+        unsubscribe()
+
 
 LOCAL_PLAYER_BACKEND = (
     getattr(MediaBackend, "LOCAL", None)
@@ -71,31 +158,13 @@ LOCAL_PLAYER_BACKEND = (
     or getattr(MediaBackend, "DEFAULT", None)
 )
 
+HandlerFactory = Callable[[Optional[str]], ConversationHandler]
+
 LEGACY_STARTUP_ENV_NAMES = (
     "REACHY_MINI_CUSTOM_PROFILE",
     "REACHY_MINI_VOICE_OVERRIDE",
 )
 BACKEND_RETRY_DELAY_SECONDS = 5.0
-
-
-def _estimate_pending_playback_seconds(robot: ReachyMini) -> float:
-    """Best-effort estimate of audio still queued in the local player."""
-    media = getattr(robot, "media", None)
-    audio = getattr(media, "audio", None)
-    if audio is None:
-        return 0.0
-
-    next_pts_ns = getattr(audio, "_playback_next_pts_ns", None)
-    get_running_time_ns = getattr(audio, "_get_playback_running_time_ns", None)
-    if next_pts_ns is None or not callable(get_running_time_ns):
-        return 0.0
-
-    try:
-        pending_ns = int(next_pts_ns) - int(get_running_time_ns())
-    except Exception:
-        return 0.0
-
-    return max(0.0, pending_ns / 1e9)
 
 
 class LocalStream:
@@ -108,28 +177,47 @@ class LocalStream:
         *,
         settings_app: Optional[FastAPI] = None,
         instance_path: Optional[str] = None,
+        handler_factory: HandlerFactory | None = None,
+        startup_voice: Optional[str] = None,
     ):
         """Initialize the stream with a realtime handler and pipelines.
 
         - ``settings_app``: the Reachy Mini Apps FastAPI to attach settings endpoints.
         - ``instance_path``: directory where per-instance ``.env`` should be stored.
+        - ``handler_factory``: builds a fresh handler for the currently selected backend.
         """
-        self.handler = handler
         self._robot = robot
         self._stop_event = asyncio.Event()
+        self._restart_requested = asyncio.Event()
         self._tasks: List[asyncio.Task[None]] = []
-        # Allow the handler to flush the player queue when appropriate.
-        self.handler._clear_queue = self.clear_audio_queue
+        self._handler_factory = handler_factory
+        self._voice_override = startup_voice
         self._settings_app: Optional[FastAPI] = settings_app
         self._instance_path: Optional[str] = instance_path
         self._settings_initialized = False
         self._asyncio_loop = None
+        self._mic_muted = False  # mic starts live; the UI toggles it via /mic
         self._active_backend_name = get_backend_choice()
         self._backend_connection_state = "not_started"
         self._backend_error: str | None = None
         self._backend_retry_delay = BACKEND_RETRY_DELAY_SECONDS
+        # One bus for the stream's lifetime: the /conversation_events route
+        # closes over it, so handler rebuilds must keep publishing into it.
+        self._event_bus = ConversationEventBus()
+        self._install_handler(handler)
 
-    # ---- Settings UI ----
+    def _install_handler(self, handler: ConversationHandler) -> None:
+        """Set the active handler and wire LocalStream-owned helpers into it."""
+        self.handler = handler
+        self.handler._clear_queue = self.clear_audio_queue
+        self._attach_event_bus_to_handler()
+
+    def _attach_event_bus_to_handler(self) -> None:
+        """Wire the event bus as the handler's activity observer, if supported."""
+        setter = getattr(self.handler, "set_activity_observer", None)
+        if callable(setter):
+            setter(self._event_bus.publish)
+
     def _read_env_lines(self, env_path: Path) -> list[str]:
         """Load env file contents or a template as a list of lines."""
         inst = env_path.parent
@@ -170,7 +258,58 @@ class LocalStream:
 
     def _backend_connected(self) -> bool:
         """Return whether the active handler currently has a realtime connection."""
-        return getattr(self.handler, "connection", None) is not None
+        try:
+            handler_state = vars(self.handler)
+        except TypeError:
+            handler_state = {}
+        return any(handler_state.get(attr) is not None for attr in ("connection", "session"))
+
+    def _can_rebuild_handler(self) -> bool:
+        """Return whether LocalStream can construct handlers for backend changes."""
+        return self._handler_factory is not None
+
+    def _build_handler_for_current_backend(self) -> ConversationHandler:
+        """Create and install a fresh handler for the current runtime backend config."""
+        if self._handler_factory is None:
+            return self.handler
+        handler = self._handler_factory(self._voice_override)
+        self._install_handler(handler)
+        self._active_backend_name = get_backend_choice()
+        return handler
+
+    async def _shutdown_active_handler(self) -> None:
+        """Best-effort shutdown for the currently active handler."""
+        try:
+            await self.handler.shutdown()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug("Active handler shutdown ignored during restart: %s", e)
+
+    def _mark_restart_requested(self, reason: str) -> None:
+        """Request a backend restart from a synchronous route handler."""
+        logger.info("Backend restart requested: %s", reason)
+        self._set_backend_connection_state("connecting")
+        loop = self._asyncio_loop
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(self.request_backend_restart(reason), loop)
+            return
+        self._restart_requested.set()
+
+    async def request_backend_restart(self, reason: str) -> None:
+        """Ask the startup loop to rebuild the backend and stop the current handler."""
+        self._set_backend_connection_state("connecting")
+        self._restart_requested.set()
+        await self._shutdown_active_handler()
+
+    async def _sleep_or_restart_requested(self, delay: float) -> None:
+        """Sleep for a retry interval, waking early if a restart is requested."""
+        if self._restart_requested.is_set():
+            return
+        try:
+            await asyncio.wait_for(self._restart_requested.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            pass
 
     @staticmethod
     def _format_backend_error(error: BaseException | str) -> str:
@@ -370,6 +509,74 @@ class LocalStream:
         """Read the saved startup personality from instance-local UI settings."""
         return read_startup_settings(self._instance_path).profile
 
+    async def apply_personality(self, profile: Optional[str]) -> str:
+        """Apply a personality by updating config and restarting the active backend."""
+        try:
+            from reachy_mini_conversation_app.config import set_custom_profile
+            from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
+
+            previous_profile = getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+            set_custom_profile(profile)
+            try:
+                get_session_instructions()
+                get_session_voice(default=get_default_voice_for_backend(get_backend_choice()))
+            except BaseException:
+                set_custom_profile(previous_profile)
+                raise
+        except Exception as e:
+            logger.error("Error applying personality '%s': %s", profile, e)
+            return f"Failed to apply personality: {e}"
+        except BaseException as e:
+            logger.error("Failed to resolve personality content: %s", e)
+            return f"Failed to apply personality: {e}"
+        await self.request_backend_restart("personality_changed")
+        return "Applied personality and restarting backend."
+
+    async def get_available_voices(self) -> list[str]:
+        """Return voices available for the currently selected backend."""
+        return get_available_voices_for_backend(get_backend_choice())
+
+    def get_current_voice(self) -> str:
+        """Return the currently selected voice override or backend profile voice."""
+        if self._voice_override:
+            return self._voice_override
+        try:
+            from reachy_mini_conversation_app.prompts import get_session_voice
+
+            return get_session_voice(default=get_default_voice_for_backend(get_backend_choice()))
+        except Exception:
+            return get_default_voice_for_backend(get_backend_choice())
+
+    async def change_voice(self, voice: str) -> str:
+        """Change the voice through the active handler without rebuilding the backend."""
+        try:
+            status = await self.handler.change_voice(voice)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error("Error changing voice to %r: %s", voice, e)
+            return f"Failed to change voice: {e}"
+
+        try:
+            current_voice = self.handler.get_current_voice()
+            if isinstance(current_voice, str) and current_voice.strip():
+                self._voice_override = current_voice
+        except Exception as e:
+            logger.debug("Could not sync LocalStream voice override after voice change: %s", e)
+        if self._voice_override:
+            self._persist_voice_override(self._voice_override)
+        return status
+
+    def _persist_voice_override(self, voice: str) -> None:
+        """Persist the chosen voice as the startup voice, keeping the startup profile."""
+        if not self._instance_path:
+            return
+        try:
+            existing = read_startup_settings(self._instance_path)
+            write_startup_settings(self._instance_path, profile=existing.profile, voice=voice)
+        except Exception as e:
+            logger.warning("Failed to persist startup voice: %s", e)
+
     def _init_settings_ui_if_needed(self) -> None:
         """Attach minimal settings UI to the settings app.
 
@@ -383,16 +590,16 @@ class LocalStream:
 
         static_dir = Path(__file__).parent / "static"
         index_file = static_dir / "index.html"
+        logger.info("Serving settings UI from %s", static_dir)
+
+        # Framework pre-registers GET / and /static; strip them so our routes aren't shadowed.
+        _detach_framework_root_routes(self._settings_app)
 
         if hasattr(self._settings_app, "mount"):
             try:
-                # Serve /static/* assets
                 self._settings_app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
             except Exception:
                 pass
-
-        class ApiKeyPayload(BaseModel):
-            openai_api_key: str
 
         class BackendPayload(BaseModel):
             backend: str
@@ -417,8 +624,9 @@ class LocalStream:
             can_proceed_with_openai = has_openai_key
             can_proceed_with_gemini = has_gemini_key
             can_proceed_with_hf = has_hf_connection
-            can_proceed = self._has_required_key(active_backend)
-            requires_restart = backend_provider != active_backend
+            readiness_backend = backend_provider if self._can_rebuild_handler() else active_backend
+            can_proceed = self._has_required_key(readiness_backend)
+            requires_restart = backend_provider != active_backend and not self._can_rebuild_handler()
             backend_connection = self._backend_connection_status()
             return {
                 "active_backend": active_backend,
@@ -465,14 +673,34 @@ class LocalStream:
                 ready = False
             return JSONResponse({"ready": ready})
 
-        # POST /openai_api_key -> set/persist key
-        @self._settings_app.post("/openai_api_key")
-        def _set_key(payload: ApiKeyPayload) -> JSONResponse:
-            key = (payload.openai_api_key or "").strip()
-            if not key:
-                return JSONResponse({"ok": False, "error": "empty_key"}, status_code=400)
-            self._persist_api_key(key)
-            return JSONResponse({"ok": True, **_status_payload()})
+        event_bus = self._event_bus
+
+        @self._settings_app.get("/conversation_events")
+        async def _conversation_events(request: Request) -> StreamingResponse:
+            return StreamingResponse(
+                _conversation_events_stream(event_bus, request),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",  # disable proxy buffering (e.g. nginx)
+                    "Connection": "keep-alive",
+                },
+            )
+
+        class MicPayload(BaseModel):
+            muted: bool
+
+        # GET /mic -> current mic mute state
+        @self._settings_app.get("/mic")
+        def _mic_state() -> JSONResponse:
+            return JSONResponse({"muted": self._mic_muted})
+
+        # POST /mic -> mute/unmute the user's microphone (Reachy Mini keeps speaking)
+        @self._settings_app.post("/mic")
+        def _set_mic(payload: MicPayload) -> JSONResponse:
+            self._mic_muted = bool(payload.muted)
+            logger.info("Microphone %s via web UI", "muted" if self._mic_muted else "unmuted")
+            return JSONResponse({"muted": self._mic_muted})
 
         @self._settings_app.post("/backend_config")
         def _set_backend(payload: BackendPayload) -> JSONResponse:
@@ -512,10 +740,14 @@ class LocalStream:
                     return JSONResponse({"ok": False, "error": "invalid_hf_mode"}, status_code=400)
 
             self._persist_backend_choice(backend)
+            if self._can_rebuild_handler():
+                self._mark_restart_requested("backend_config_changed")
             payload_data = _status_payload()
             message = "Backend saved."
             if payload_data["requires_restart"]:
                 message = "Backend saved. Restart Reachy Mini Conversation from the desktop app to apply it."
+            elif self._can_rebuild_handler():
+                message = "Backend saved. Reconnecting backend."
             return JSONResponse(
                 {
                     "ok": True,
@@ -524,47 +756,39 @@ class LocalStream:
                 }
             )
 
-        # POST /validate_api_key -> validate key without persisting it
-        @self._settings_app.post("/validate_api_key")
-        async def _validate_key(payload: ApiKeyPayload) -> JSONResponse:
-            key = (payload.openai_api_key or "").strip()
-            if not key:
-                return JSONResponse({"valid": False, "error": "empty_key"}, status_code=400)
-
-            # Try to validate by checking if we can fetch the models
-            try:
-                import httpx
-
-                headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    response = await client.get("https://api.openai.com/v1/models", headers=headers)
-                    if response.status_code == 200:
-                        return JSONResponse({"valid": True})
-                    elif response.status_code == 401:
-                        return JSONResponse({"valid": False, "error": "invalid_api_key"}, status_code=401)
-                    else:
-                        return JSONResponse(
-                            {"valid": False, "error": "validation_failed"}, status_code=response.status_code
-                        )
-            except Exception as e:
-                logger.warning(f"API key validation failed: {e}")
-                return JSONResponse({"valid": False, "error": "validation_error"}, status_code=500)
-
         self._settings_initialized = True
 
     async def _run_handler_startup_loop(self) -> None:
         """Start the realtime handler and keep settings UI alive after backend failures."""
         while not self._stop_event.is_set():
-            active_backend = self._active_backend()
-            if get_backend_choice() != active_backend:
-                self._set_backend_connection_state("restart_required")
-                await asyncio.sleep(0.5)
-                continue
+            selected_backend = get_backend_choice()
+            if selected_backend != self._active_backend() or self._restart_requested.is_set():
+                await self._shutdown_active_handler()
+                if not self._can_rebuild_handler():
+                    self._restart_requested.clear()
+                    self._set_backend_connection_state("restart_required")
+                    await self._sleep_or_restart_requested(0.5)
+                    continue
+                self._restart_requested.clear()
+                try:
+                    self._build_handler_for_current_backend()
+                except Exception as e:
+                    self._set_backend_connection_state("disconnected", e)
+                    logger.warning(
+                        "%s backend handler failed to initialize: %s. Retrying in %.1f seconds.",
+                        selected_backend,
+                        e,
+                        self._backend_retry_delay,
+                        exc_info=logger.isEnabledFor(logging.DEBUG),
+                    )
+                    await self._sleep_or_restart_requested(self._backend_retry_delay)
+                    continue
 
+            active_backend = self._active_backend()
             if not self._has_required_key(active_backend):
                 requirement_name = self._requirement_name(active_backend)
                 self._set_backend_connection_state("waiting_for_config", f"{requirement_name} is not configured.")
-                await asyncio.sleep(0.5)
+                await self._sleep_or_restart_requested(0.5)
                 continue
 
             self._set_backend_connection_state("connecting")
@@ -585,13 +809,16 @@ class LocalStream:
                 if self._stop_event.is_set():
                     return
                 self._set_backend_connection_state("disconnected")
+                if self._restart_requested.is_set():
+                    logger.info("%s backend stopped for requested restart.", active_backend)
+                    continue
                 logger.info(
                     "%s backend session ended. Settings UI remains available; retrying in %.1f seconds.",
                     active_backend,
                     self._backend_retry_delay,
                 )
 
-            await asyncio.sleep(self._backend_retry_delay)
+            await self._sleep_or_restart_requested(self._backend_retry_delay)
 
     def launch(self) -> None:
         """Start the recorder/player and run the async processing loops.
@@ -633,8 +860,15 @@ class LocalStream:
             # Poll until the key becomes available (set via the settings UI)
             try:
                 while not self._stop_event.is_set() and not self._has_required_key(active_backend):
-                    if get_backend_choice() != active_backend:
-                        self._set_backend_connection_state("restart_required")
+                    selected_backend = get_backend_choice()
+                    if selected_backend != active_backend:
+                        if self._can_rebuild_handler():
+                            active_backend = selected_backend
+                            self._active_backend_name = selected_backend
+                            self._restart_requested.set()
+                            self._set_backend_connection_state("waiting_for_config")
+                        else:
+                            self._set_backend_connection_state("restart_required")
                     time.sleep(0.2)
             except KeyboardInterrupt:
                 logger.info("Interrupted while waiting for API key.")
@@ -662,9 +896,13 @@ class LocalStream:
                         lambda: self._asyncio_loop,
                         persist_personality=self._persist_personality,
                         get_persisted_personality=self._read_persisted_personality,
+                        apply_personality=self.apply_personality,
+                        get_available_voices=self.get_available_voices,
+                        get_current_voice=self.get_current_voice,
+                        change_voice=self.change_voice,
                     )
             except Exception:
-                pass
+                logger.exception("Failed to mount personality routes; the personality UI will be unavailable")
             self._tasks = [
                 asyncio.create_task(self._run_handler_startup_loop(), name="realtime-handler"),
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
@@ -711,29 +949,35 @@ class LocalStream:
                 task.cancel()
 
     def clear_audio_queue(self) -> None:
-        """Flush the player's appsrc to drop any queued audio immediately."""
+        """Flush queued playback audio immediately on user barge-in.
+
+        Calls the SDK's ``clear_player()`` — now a first-class flush on both
+        the local GStreamer and WebRTC backends (the WebRTC one also tells the
+        daemon to drop audio already queued for the speaker). Falls back to the
+        deprecated ``clear_output_buffer()`` only for older SDKs.
+        """
         logger.info("User intervention: flushing player queue")
-        backend = getattr(self._robot.media, "backend", None)
         audio = getattr(self._robot.media, "audio", None)
         if audio is not None:
-            if (
-                LOCAL_PLAYER_BACKEND is not None
-                and backend == LOCAL_PLAYER_BACKEND
-                and hasattr(audio, "clear_player")
-                and callable(audio.clear_player)
-            ):
+            if hasattr(audio, "clear_player") and callable(audio.clear_player):
                 audio.clear_player()
-            elif (
-                backend == MediaBackend.WEBRTC
-                and hasattr(audio, "clear_output_buffer")
-                and callable(audio.clear_output_buffer)
-            ):
-                audio.clear_output_buffer()
             elif hasattr(audio, "clear_output_buffer") and callable(audio.clear_output_buffer):
+                # Older SDK without clear_player(); best-effort.
                 audio.clear_output_buffer()
-            elif hasattr(audio, "clear_player") and callable(audio.clear_player):
-                audio.clear_player()
-        self.handler.output_queue = asyncio.Queue()
+        # Drain the handler's pending output in place — do NOT replace the
+        # queue object, since emit() may be awaiting it (wait_for_item).
+        self._drain_output_queue()
+
+    def _drain_output_queue(self) -> None:
+        """Empty the handler's output queue in place without replacing it."""
+        queue = getattr(self.handler, "output_queue", None)
+        if queue is None:
+            return
+        while not queue.empty():
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     async def record_loop(self) -> None:
         """Read mic frames from the recorder and forward them to the handler."""
@@ -742,14 +986,18 @@ class LocalStream:
 
         while not self._stop_event.is_set():
             audio_frame = self._robot.media.get_audio_sample()
-            if audio_frame is not None:
+            if audio_frame is not None and not self._mic_muted:
                 await self.handler.receive((input_sample_rate, audio_frame))
             await asyncio.sleep(0)  # avoid busy loop
 
     async def play_loop(self) -> None:
         """Fetch outputs from the handler: log text and play audio frames."""
         while not self._stop_event.is_set():
-            handler_output = await self.handler.emit()
+            handler = self.handler
+            try:
+                handler_output = await asyncio.wait_for(handler.emit(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
 
             if isinstance(handler_output, AdditionalOutputs):
                 for msg in handler_output.args:
@@ -790,11 +1038,6 @@ class LocalStream:
                         audio_frame,
                         num_samples,
                     )
-
-                head_wobbler = self.handler.deps.head_wobbler
-                if head_wobbler is not None:
-                    playback_delay_s = _estimate_pending_playback_seconds(self._robot)
-                    head_wobbler.feed_pcm(audio_data.reshape(1, -1), input_sample_rate, start_delay_s=playback_delay_s)
 
                 self._robot.media.push_audio_sample(audio_frame)
 

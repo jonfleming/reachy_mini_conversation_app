@@ -38,6 +38,9 @@ coverage.xml
 *.swp
 *.swo
 
+# AI tooling
+.claude/
+
 # Security
 *.key
 *.pem
@@ -63,3 +66,8 @@ src/reachy_mini_conversation_app/profiles/user_personalities/
 
 # Editor workspace files
 *.code-workspace
+
+# Terminal-mode runtime content
+external_content/installed_tool_spaces.json
+external_content/external_profiles/*
+external_content/external_tools/*

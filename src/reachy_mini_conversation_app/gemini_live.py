@@ -9,6 +9,7 @@ Audio formats (per Gemini Live API spec):
 """
 
 import json
+import time
 import uuid
 import base64
 import random
@@ -18,7 +19,6 @@ from typing import Any, Dict, List, Final, Tuple, Literal, Optional
 from datetime import datetime
 
 import numpy as np
-import gradio as gr
 from google import genai
 from fastrtc import AdditionalOutputs, wait_for_item, audio_to_int16
 from google.genai import types
@@ -32,6 +32,7 @@ from reachy_mini_conversation_app.config import (
     config,
 )
 from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
+from reachy_mini_conversation_app.idle_policy import start_idle_tool_call
 from reachy_mini_conversation_app.tools.core_tools import (
     ToolDependencies,
     get_active_tool_specs,
@@ -144,7 +145,6 @@ class GeminiLiveHandler(ConversationHandler):
     def __init__(
         self,
         deps: ToolDependencies,
-        gradio_mode: bool = False,
         instance_path: Optional[str] = None,
         startup_voice: Optional[str] = None,
     ):
@@ -156,15 +156,14 @@ class GeminiLiveHandler(ConversationHandler):
         )
 
         self.deps = deps
-        self.gradio_mode = gradio_mode
         self.instance_path = instance_path
         self._voice_override: str | None = _resolve_gemini_startup_voice(startup_voice)
 
         self.session: Any = None  # google.genai live session
         self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
 
-        self.last_activity_time = asyncio.get_event_loop().time()
-        self.start_time = asyncio.get_event_loop().time()
+        self.last_activity_time = time.monotonic()
+        self.start_time = time.monotonic()
         self.is_idle_tool_call = False
 
         # Track API key source (env vs textbox)
@@ -184,10 +183,9 @@ class GeminiLiveHandler(ConversationHandler):
         self._listening_state = False
 
     def copy(self) -> "GeminiLiveHandler":
-        """Create a copy of the handler."""
+        """Return a fresh handler, preserving deps and voice override."""
         return GeminiLiveHandler(
             self.deps,
-            self.gradio_mode,
             self.instance_path,
             startup_voice=self._voice_override,
         )
@@ -211,19 +209,29 @@ class GeminiLiveHandler(ConversationHandler):
 
         await self.output_queue.put(AdditionalOutputs({"role": role, "content": transcript}))
 
+    def _mark_activity(self, reason: str) -> None:
+        """Refresh the idle timestamp and notify the activity observer."""
+        self.last_activity_time = asyncio.get_event_loop().time()
+        logger.debug("last activity time updated to %s (%s)", self.last_activity_time, reason)
+        observer = self._activity_observer
+        if observer is not None:
+            try:
+                observer(reason)
+            except Exception:
+                logger.debug("activity observer raised (ignored)", exc_info=True)
+
     async def _mark_model_response_started(self) -> None:
         """Switch out of user-listening mode when the model begins responding."""
         await self._flush_transcript_chunks("user", self._pending_user_transcript_chunks)
         self._set_listening_state(False)
+        self._mark_activity("response_created")
 
     async def _handle_interruption(self) -> None:
         """Stop current playback and preserve any transcript already spoken."""
         logger.debug("Gemini: user interrupted")
         await self._flush_transcript_chunks("assistant", self._pending_assistant_transcript_chunks)
-        if hasattr(self, "_clear_queue") and callable(self._clear_queue):
+        if self._clear_queue:
             self._clear_queue()
-        if self.deps.head_wobbler is not None:
-            self.deps.head_wobbler.reset()
         self._set_listening_state(True)
 
     async def _handle_turn_complete(self) -> None:
@@ -232,8 +240,6 @@ class GeminiLiveHandler(ConversationHandler):
         await self._flush_transcript_chunks("user", self._pending_user_transcript_chunks)
         await self._flush_transcript_chunks("assistant", self._pending_assistant_transcript_chunks)
         self._set_listening_state(False)
-        if self.deps.head_wobbler is not None:
-            self.deps.head_wobbler.request_reset_after_current_audio()
 
     async def apply_personality(self, profile: str | None) -> str:
         """Apply a new personality (profile) at runtime.
@@ -287,20 +293,9 @@ class GeminiLiveHandler(ConversationHandler):
     async def start_up(self) -> None:
         """Start the handler with retries on unexpected closure."""
         gemini_api_key = config.GEMINI_API_KEY
-        if self.gradio_mode and not gemini_api_key:
-            await self.wait_for_args()  # type: ignore[no-untyped-call]
-            args = list(self.latest_args)
-            textbox_api_key = args[3] if len(args) > 3 and len(args[3]) > 0 else None
-            if textbox_api_key is not None:
-                gemini_api_key = textbox_api_key
-                self._key_source = "textbox"
-                self._provided_api_key = textbox_api_key
-            else:
-                gemini_api_key = config.GEMINI_API_KEY
-        else:
-            if not gemini_api_key or not gemini_api_key.strip():
-                logger.warning("GEMINI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
-                gemini_api_key = "DUMMY"
+        if not gemini_api_key or not gemini_api_key.strip():
+            logger.warning("GEMINI_API_KEY missing. Proceeding with a placeholder (tests/offline).")
+            gemini_api_key = "DUMMY"
 
         self.client = genai.Client(api_key=gemini_api_key)
 
@@ -414,10 +409,9 @@ class GeminiLiveHandler(ConversationHandler):
             args_json_str = json.dumps(args_dict)
 
             logger.info(
-                "Gemini tool call: tool_name=%r, call_id=%s, is_idle=%s, args=%s",
+                "Gemini tool call: tool_name=%r, call_id=%s, args=%s",
                 tool_name,
                 call_id,
-                self.is_idle_tool_call,
                 args_json_str,
             )
 
@@ -428,7 +422,7 @@ class GeminiLiveHandler(ConversationHandler):
                     args_json_str=args_json_str,
                     deps=self.deps,
                 ),
-                is_idle_tool_call=self.is_idle_tool_call,
+                is_idle_tool_call=False,
             )
 
             await self.output_queue.put(
@@ -439,9 +433,6 @@ class GeminiLiveHandler(ConversationHandler):
                     },
                 ),
             )
-
-            if self.is_idle_tool_call:
-                self.is_idle_tool_call = False
 
             logger.info("Started background tool: %s (id=%s, call_id=%s)", tool_name, bg_tool.tool_id, call_id)
 
@@ -462,7 +453,14 @@ class GeminiLiveHandler(ConversationHandler):
             return
 
         try:
-            if bg_tool.tool_name == "camera" and isinstance(tool_result, dict) and "b64_im" in tool_result:
+            send_result_to_model = not bg_tool.is_idle_tool_call
+
+            if (
+                send_result_to_model
+                and bg_tool.tool_name == "camera"
+                and isinstance(tool_result, dict)
+                and "b64_im" in tool_result
+            ):
                 b64_im = tool_result.pop("b64_im")
                 if not tool_result:
                     tool_result = {"status": "image_captured"}
@@ -479,36 +477,23 @@ class GeminiLiveHandler(ConversationHandler):
 
             console_content = json.dumps(tool_result)
 
-            function_response = types.FunctionResponse(
-                id=bg_tool.id if isinstance(bg_tool.id, str) else str(bg_tool.id),
-                name=bg_tool.tool_name,
-                response=tool_result,
-            )
-            await self.session.send_tool_response(function_responses=[function_response])
+            self._mark_activity("tool_result_ready")
+            if send_result_to_model:
+                function_response = types.FunctionResponse(
+                    id=bg_tool.id if isinstance(bg_tool.id, str) else str(bg_tool.id),
+                    name=bg_tool.tool_name,
+                    response=tool_result,
+                )
+                await self.session.send_tool_response(function_responses=[function_response])
 
             await self.output_queue.put(
                 AdditionalOutputs(
                     {
                         "role": "assistant",
                         "content": console_content,
-                        "metadata": {
-                            "title": f"🛠️ Used tool {bg_tool.tool_name}",
-                            "status": "done",
-                        },
                     },
                 ),
             )
-
-            if bg_tool.tool_name == "camera" and self.deps.camera_worker is not None:
-                np_img = self.deps.camera_worker.get_latest_frame()
-                if np_img is not None:
-                    rgb_frame = np.ascontiguousarray(np_img[..., ::-1])
-                else:
-                    rgb_frame = None
-                img = gr.Image(value=rgb_frame)
-                await self.output_queue.put(
-                    AdditionalOutputs({"role": "assistant", "content": img}),
-                )
 
         except Exception as e:
             logger.warning("Error sending tool result to Gemini: %s", e)
@@ -602,12 +587,7 @@ class GeminiLiveHandler(ConversationHandler):
                                             if len(audio_array) == 0:
                                                 continue
 
-                                            if self.gradio_mode and self.deps.head_wobbler is not None:
-                                                self.deps.head_wobbler.feed(
-                                                    base64.b64encode(audio_bytes).decode("utf-8")
-                                                )
-
-                                            self.last_activity_time = asyncio.get_event_loop().time()
+                                            self._mark_activity("assistant_audio_delta")
 
                                             await self.output_queue.put(
                                                 (GEMINI_OUTPUT_SAMPLE_RATE, audio_array),
@@ -619,6 +599,7 @@ class GeminiLiveHandler(ConversationHandler):
                                     logger.debug("User transcript chunk: %s", transcript)
                                     self._pending_user_transcript_chunks.append(transcript)
                                     self._set_listening_state(True)
+                                    self._mark_activity("user_transcription_delta")
 
                                 # Handle output transcription (model speech)
                                 if content.output_transcription and content.output_transcription.text:
@@ -629,10 +610,12 @@ class GeminiLiveHandler(ConversationHandler):
 
                                 # Turn complete
                                 if content.turn_complete:
+                                    self._mark_activity("assistant_transcript_done")
                                     await self._handle_turn_complete()
 
                             # Handle tool calls
                             if response.tool_call:
+                                self._mark_activity("tool_call_received")
                                 await self._handle_tool_call(response)
 
                     except Exception as e:
@@ -685,14 +668,14 @@ class GeminiLiveHandler(ConversationHandler):
     async def emit(self) -> Tuple[int, NDArray[np.int16]] | AdditionalOutputs | None:
         """Emit audio frame to be played by the speaker."""
         # Handle idle
-        idle_duration = asyncio.get_event_loop().time() - self.last_activity_time
+        idle_duration = time.monotonic() - self.last_activity_time
         if idle_duration > 15.0 and self.deps.movement_manager.is_idle():
             try:
                 await self.send_idle_signal(idle_duration)
             except Exception as e:
-                logger.warning("Idle signal skipped: %s", e)
+                logger.warning("Idle tool skipped: %s", e)
                 return None
-            self.last_activity_time = asyncio.get_event_loop().time()
+            self.last_activity_time = time.monotonic()
 
         return await wait_for_item(self.output_queue)  # type: ignore[no-any-return]
 
@@ -719,25 +702,28 @@ class GeminiLiveHandler(ConversationHandler):
 
     def format_timestamp(self) -> str:
         """Format current timestamp with date, time, and elapsed seconds."""
-        loop_time = asyncio.get_event_loop().time()
+        loop_time = time.monotonic()
         elapsed_seconds = loop_time - self.start_time
         dt = datetime.now()
         return f"[{dt.strftime('%Y-%m-%d %H:%M:%S')} | +{elapsed_seconds:.1f}s]"
 
     async def send_idle_signal(self, idle_duration: float) -> None:
-        """Send an idle signal to Gemini."""
-        logger.debug("Sending idle signal")
-        self.is_idle_tool_call = True
-        timestamp_msg = (
-            f"[Idle time update: {self.format_timestamp()} - No activity for {idle_duration:.1f}s] "
-            "You've been idle for a while. Feel free to get creative - dance, show an emotion, "
-            "look around, call idle_do_nothing to stay still and silent, or just be yourself!"
-        )
+        """Run a locally selected idle tool without sending an idle turn to Gemini."""
+        logger.debug("Selecting local Gemini idle tool")
         if not self.session:
-            logger.debug("No session, cannot send idle signal")
+            logger.debug("No session, cannot run idle tool")
             return
 
-        await self.session.send_realtime_input(text=timestamp_msg)
+        available_tool_names = {
+            spec["name"] for spec in get_active_tool_specs(self.deps) if isinstance(spec.get("name"), str)
+        }
+        await start_idle_tool_call(
+            deps=self.deps,
+            tool_manager=self.tool_manager,
+            output_queue=self.output_queue,
+            available_tool_names=available_tool_names,
+            idle_duration=idle_duration,
+        )
 
     async def get_available_voices(self) -> list[str]:
         """Return the list of available Gemini voices."""

@@ -77,7 +77,7 @@ def _expand_prompt_includes(content: str) -> str:
     return "\n".join(expanded_lines)
 
 
-def get_session_instructions(memory_manager: "Any | None" = None) -> str:
+def get_session_instructions(memory_manager: Any | None = None) -> str:
     """Get session instructions, loading from REACHY_MINI_CUSTOM_PROFILE if set.
 
     Args:
@@ -98,7 +98,7 @@ def get_session_instructions(memory_manager: "Any | None" = None) -> str:
             )
         else:
             logger.info(f"Loading prompt from profile '{profile}'")
-        instructions_file = config.PROFILES_DIRECTORY / profile / INSTRUCTIONS_FILENAME
+        instructions_file = config.resolve_profile_dir(profile) / INSTRUCTIONS_FILENAME
 
     try:
         if instructions_file.exists():
@@ -141,7 +141,7 @@ def get_session_voice(default: str | None = None) -> str:
     if not profile:
         return fallback
     try:
-        voice_file = config.PROFILES_DIRECTORY / profile / VOICE_FILENAME
+        voice_file = config.resolve_profile_dir(profile) / VOICE_FILENAME
         if voice_file.exists():
             voice = voice_file.read_text(encoding="utf-8").strip()
             return voice or fallback
