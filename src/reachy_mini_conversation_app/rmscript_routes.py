@@ -1,13 +1,16 @@
 """FastAPI routes for the shared rmscript tool library.
 
-Exposes compile-checking and CRUD endpoints for .rmscript-defined tools.
-Save rejects sources that fail to compile, so the library never holds a tool
-that would hard-fail the registry. No robot motion here (see preview routes).
+Exposes compile-checking and CRUD endpoints for .rmscript-defined tools, plus
+preview/abort endpoints that play a script on the robot. Save rejects sources
+that fail to compile, so the library never holds a tool that would hard-fail
+the registry. Preview/abort run on the LocalStream loop via the supplied
+callables; without them (e.g. in tests) those endpoints report unavailable.
 """
 
 from __future__ import annotations
+import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Callable, Optional, Coroutine
 
 from fastapi import FastAPI, Request
 from rmscript import compile_script
@@ -36,8 +39,40 @@ def _dump(items: Any) -> List[Dict[str, Any]]:
     ]
 
 
-def mount_rmscript_routes(app: FastAPI) -> None:
+def mount_rmscript_routes(
+    app: FastAPI,
+    *,
+    get_loop: Callable[[], asyncio.AbstractEventLoop | None] | None = None,
+    preview_rmscript: Callable[[str], Coroutine[Any, Any, dict[str, Any]]] | None = None,
+    abort_preview: Callable[[], Coroutine[Any, Any, dict[str, Any]]] | None = None,
+) -> None:
     """Register shared rmscript tool library endpoints on a FastAPI app."""
+
+    def _schedule(coro: Coroutine[Any, Any, dict[str, Any]]) -> Optional["asyncio.Future[dict[str, Any]]"]:
+        """Run a robot-side coroutine on the LocalStream loop, or None if unavailable."""
+        loop = get_loop() if get_loop else None
+        if loop is None:
+            return None
+        return asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
+
+    @app.post("/rmscript/preview")
+    async def _preview(request: Request) -> Any:
+        if preview_rmscript is None:
+            return JSONResponse({"ok": False, "error": "preview_unavailable"}, status_code=503)
+        raw = await request.json()
+        fut = _schedule(preview_rmscript(str(raw.get("source", ""))))
+        if fut is None:
+            return JSONResponse({"ok": False, "error": "loop_unavailable"}, status_code=503)
+        return await fut
+
+    @app.post("/rmscript/abort")
+    async def _abort() -> Any:
+        if abort_preview is None:
+            return JSONResponse({"ok": False, "error": "preview_unavailable"}, status_code=503)
+        fut = _schedule(abort_preview())
+        if fut is None:
+            return JSONResponse({"ok": False, "error": "loop_unavailable"}, status_code=503)
+        return await fut
 
     @app.post("/rmscript/verify")
     async def _verify(request: Request) -> dict:  # type: ignore

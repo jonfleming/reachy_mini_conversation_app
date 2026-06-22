@@ -89,6 +89,36 @@ def test_single_antenna_keeps_other_in_place() -> None:
     assert move.target_antennas[1] == pytest.approx(np.pi)
 
 
+def test_preview_clears_queue_and_brackets_head_tracking() -> None:
+    """Preview clears the queue, pauses tracking, runs the script, then restores tracking."""
+    queued: List[Any] = []
+    deps = _make_deps(queued)
+    deps.camera_worker = MagicMock()
+    deps.camera_worker.is_head_tracking_enabled = True
+    tracking_calls: List[bool] = []
+    deps.camera_worker.set_head_tracking_enabled.side_effect = tracking_calls.append
+
+    result = asyncio.run(rmscript_tool.run_rmscript_preview('"t"\nlook left', deps))
+
+    assert result["ok"] is True
+    deps.movement_manager.clear_move_queue.assert_called()
+    assert tracking_calls[0] is False  # paused before playing
+    assert tracking_calls[-1] is True  # restored to its prior state afterwards
+    assert len(queued) == 1  # the look move was queued
+
+
+def test_preview_compile_failure_does_not_touch_robot() -> None:
+    """An invalid script returns compile_failed without clearing the queue or moving."""
+    queued: List[Any] = []
+    deps = _make_deps(queued)
+
+    result = asyncio.run(rmscript_tool.run_rmscript_preview("floop the gleeb", deps))
+
+    assert result == {"ok": False, "error": "compile_failed"}
+    deps.movement_manager.clear_move_queue.assert_not_called()
+    assert queued == []
+
+
 def test_picture_returns_b64(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `picture` action returns the latest camera frame as base64 JPEG."""
     queued: List[Any] = []
