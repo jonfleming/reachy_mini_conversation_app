@@ -82,6 +82,10 @@ export const saveBehavior = (name, source) =>
   request("POST", `/rmscript/tools/${encodeURIComponent(name)}`, { body: { source } });
 export const deleteBehavior = (name) => request("DELETE", `/rmscript/tools/${encodeURIComponent(name)}`);
 export const verifyRmscript = (source) => request("POST", "/rmscript/verify", { body: { source } });
+// Preview plays on the robot for the script's full duration, so allow a long timeout.
+export const previewBehavior = (source) =>
+  request("POST", "/rmscript/preview", { body: { source }, timeoutMs: 600000 });
+export const abortBehavior = () => request("POST", "/rmscript/abort");
 
 export const listVoices = () => request("GET", "/voices");
 export const getCurrentVoice = () => request("GET", "/voices/current");

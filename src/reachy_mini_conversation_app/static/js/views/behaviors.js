@@ -6,6 +6,8 @@ import {
   saveBehavior,
   deleteBehavior,
   verifyRmscript,
+  previewBehavior,
+  abortBehavior,
   describeError,
   untilReady,
 } from "../api.js";
@@ -44,11 +46,16 @@ export async function mountBehaviorsView({ outlet, signal }) {
 
   let editor = null;
   let verifyTimer = null;
+  let previewing = false;
 
   function destroyEditor() {
     if (verifyTimer) {
       clearTimeout(verifyTimer);
       verifyTimer = null;
+    }
+    if (previewing) {
+      previewing = false;
+      abortBehavior().catch(() => {}); // stop the robot if we leave mid-preview
     }
     if (editor) {
       editor.destroy();
@@ -131,6 +138,9 @@ export async function mountBehaviorsView({ outlet, signal }) {
     const status = h("p", { class: "behaviors-verify", role: "status", "aria-live": "polite" });
     const editorMount = h("div", {});
     const saveBtn = h("button", { class: "btn btn--primary" }, "Save");
+    const previewBtn = h("button", { class: "btn btn--ghost" }, "Preview on robot");
+    const stopBtn = h("button", { class: "btn btn--ghost", disabled: true }, "Stop");
+    let valid = false;
 
     function scheduleVerify(src) {
       if (verifyTimer) clearTimeout(verifyTimer);
@@ -146,16 +156,17 @@ export async function mountBehaviorsView({ outlet, signal }) {
       }
       if (signal.aborted || !editor) return;
       clearError(editor);
+      valid = !!res.success;
+      saveBtn.disabled = !valid;
+      previewBtn.disabled = !valid || previewing;
       if (res.success) {
         status.classList.remove("is-error");
         status.textContent = res.description ? `✓ Valid — ${res.description}` : "✓ Valid";
-        saveBtn.disabled = false;
       } else {
         status.classList.add("is-error");
         const err = res.errors && res.errors[0];
         status.textContent = err ? `Line ${err.line ?? "?"}: ${err.message}` : "Invalid script.";
         if (err && err.line) showErrorLine(editor, err.line);
-        saveBtn.disabled = true;
       }
     }
 
@@ -174,6 +185,8 @@ export async function mountBehaviorsView({ outlet, signal }) {
         "div",
         { class: "settings-actions" },
         saveBtn,
+        previewBtn,
+        stopBtn,
         h("button", { class: "btn btn--ghost", onClick: destroyEditor }, "Cancel")
       )
     );
@@ -182,6 +195,38 @@ export async function mountBehaviorsView({ outlet, signal }) {
 
     editor = createRmscriptEditor(editorMount, source, { onChange: scheduleVerify });
     runVerify(source);
+
+    previewBtn.addEventListener("click", async () => {
+      previewing = true;
+      previewBtn.disabled = true;
+      stopBtn.disabled = false;
+      status.classList.remove("is-error");
+      status.textContent = "Playing on robot…";
+      try {
+        const res = await previewBehavior(getContent(editor));
+        if (res?.ok === false) {
+          status.classList.add("is-error");
+          status.textContent = "Preview failed (script did not run).";
+        } else {
+          status.textContent = res?.aborted ? "Stopped." : "Done.";
+        }
+      } catch (error) {
+        status.classList.add("is-error");
+        status.textContent =
+          error?.body?.error === "loop_unavailable" || error?.body?.error === "preview_unavailable"
+            ? "Robot not available for preview."
+            : `Preview failed: ${describeError(error)}`;
+      } finally {
+        previewing = false;
+        stopBtn.disabled = true;
+        previewBtn.disabled = !valid;
+      }
+    });
+
+    stopBtn.addEventListener("click", () => {
+      stopBtn.disabled = true;
+      abortBehavior().catch(() => {});
+    });
 
     saveBtn.addEventListener("click", async () => {
       const finalName = (nameInput.value || "").trim();
