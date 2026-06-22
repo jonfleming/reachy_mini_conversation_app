@@ -1,3 +1,4 @@
+import time
 import random
 import asyncio
 import logging
@@ -285,6 +286,29 @@ async def test_idle_signal_starts_local_tool_without_model_turn(monkeypatch: Any
 
 
 @pytest.mark.asyncio
+async def test_idle_emit_updates_idle_clock_without_refreshing_activity(monkeypatch: Any) -> None:
+    """Idle behavior should not postpone app inactivity timeout."""
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    deps.movement_manager.is_idle.return_value = True
+    handler = OpenaiRealtimeHandler(deps)
+    now = time.monotonic()
+    previous_activity_time = now - 181.0
+    previous_idle_behavior_time = now - 181.0
+    handler.last_activity_time = previous_activity_time
+    handler.last_idle_behavior_time = previous_idle_behavior_time
+    handler._response_done_event.set()
+    send_idle_signal = AsyncMock()
+    monkeypatch.setattr(handler, "send_idle_signal", send_idle_signal)
+    monkeypatch.setattr(base_rt_mod, "wait_for_item", AsyncMock(return_value=None))
+
+    await handler.emit()
+
+    send_idle_signal.assert_awaited_once()
+    assert handler.last_activity_time == previous_activity_time
+    assert handler.last_idle_behavior_time > previous_idle_behavior_time
+
+
+@pytest.mark.asyncio
 async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) -> None:
     """Locally selected idle tool completions should stay out of the model conversation."""
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
@@ -292,6 +316,7 @@ async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) 
 
     fake_item = SimpleNamespace(create=AsyncMock())
     handler.connection = SimpleNamespace(conversation=SimpleNamespace(item=fake_item))
+    handler.last_activity_time = 1.0
     safe_response_create = AsyncMock()
     monkeypatch.setattr(handler, "_safe_response_create", safe_response_create)
 
@@ -307,6 +332,7 @@ async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) 
 
     fake_item.create.assert_not_awaited()
     safe_response_create.assert_not_awaited()
+    assert handler.last_activity_time == 1.0
 
 
 @pytest.mark.asyncio

@@ -131,6 +131,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
 
         self.last_activity_time = time.monotonic()
+        self.last_idle_behavior_time = self.last_activity_time
         self.start_time = time.monotonic()
         self.is_idle_tool_call = False
         self.instance_path = instance_path
@@ -598,8 +599,9 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             return
 
         try:
-            self._mark_activity("tool_result_ready")
             send_result_to_model = not bg_tool.is_idle_tool_call
+            if send_result_to_model:
+                self._mark_activity("tool_result_ready")
             model_result_submitted = False
             if send_result_to_model and isinstance(bg_tool.id, str):
                 if not await self._wait_for_response_done_before_tool_result():
@@ -977,15 +979,22 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         # This is called periodically by the fastrtc Stream
 
         # Handle idle
-        idle_duration = time.monotonic() - self.last_activity_time
-        if idle_duration > 180.0 and self._response_done_event.is_set() and self.deps.movement_manager.is_idle():
+        now = time.monotonic()
+        idle_duration = now - self.last_activity_time
+        idle_behavior_duration = now - self.last_idle_behavior_time
+        if (
+            idle_duration > 180.0
+            and idle_behavior_duration > 180.0
+            and self._response_done_event.is_set()
+            and self.deps.movement_manager.is_idle()
+        ):
             try:
                 await self.send_idle_signal(idle_duration)
             except Exception as e:
                 logger.warning("Idle tool skipped (connection closed?): %s", e)
                 return None
 
-            self.last_activity_time = time.monotonic()  # avoid repeated resets
+            self.last_idle_behavior_time = now
 
         return await wait_for_item(self.output_queue)  # type: ignore[no-any-return]
 

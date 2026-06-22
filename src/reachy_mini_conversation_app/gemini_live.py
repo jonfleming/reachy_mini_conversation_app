@@ -163,6 +163,7 @@ class GeminiLiveHandler(ConversationHandler):
         self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
 
         self.last_activity_time = time.monotonic()
+        self.last_idle_behavior_time = self.last_activity_time
         self.start_time = time.monotonic()
         self.is_idle_tool_call = False
 
@@ -595,6 +596,7 @@ class GeminiLiveHandler(ConversationHandler):
 
                                 # Handle input transcription (user speech)
                                 if content.input_transcription and content.input_transcription.text:
+                                    self.last_activity_time = time.monotonic()
                                     transcript = content.input_transcription.text
                                     logger.debug("User transcript chunk: %s", transcript)
                                     self._pending_user_transcript_chunks.append(transcript)
@@ -668,14 +670,17 @@ class GeminiLiveHandler(ConversationHandler):
     async def emit(self) -> Tuple[int, NDArray[np.int16]] | AdditionalOutputs | None:
         """Emit audio frame to be played by the speaker."""
         # Handle idle
-        idle_duration = time.monotonic() - self.last_activity_time
-        if idle_duration > 15.0 and self.deps.movement_manager.is_idle():
+        now = time.monotonic()
+        idle_duration = now - self.last_activity_time
+        idle_behavior_duration = now - self.last_idle_behavior_time
+        if idle_duration > 15.0 and idle_behavior_duration > 15.0 and self.deps.movement_manager.is_idle():
             try:
                 await self.send_idle_signal(idle_duration)
             except Exception as e:
                 logger.warning("Idle tool skipped: %s", e)
                 return None
-            self.last_activity_time = time.monotonic()
+
+            self.last_idle_behavior_time = now
 
         return await wait_for_item(self.output_queue)  # type: ignore[no-any-return]
 
