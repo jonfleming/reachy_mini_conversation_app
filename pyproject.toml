@@ -101,6 +101,7 @@ reachy_mini_conversation_app = [
 reachy_talk_data = [
   "profiles/**/*.txt",
   "profiles/**/*.py",
+  "profiles/**/*.rmscript",
 ]
 
 [tool.ruff]

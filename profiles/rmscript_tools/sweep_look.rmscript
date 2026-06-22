@@ -1,0 +1,9 @@
+"Sweep head from left to right while rotating the body, pausing at each extreme, then return to center"
+
+# turn rotates body and head together. 162 = 0.9 * 180°; superslow = 3s transition.
+turn left 162 superslow
+wait 1s
+turn center superslow
+turn right 162 superslow
+wait 1s
+turn center superslow

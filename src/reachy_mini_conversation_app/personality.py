@@ -102,7 +102,14 @@ def available_tools_for(selected: str) -> List[str]:
                 local.append(py.stem)
     except Exception:
         pass
-    return sorted(set(shared + local))
+    rmscript: List[str] = []
+    try:
+        rmdir = config.rmscript_tools_root()
+        if rmdir.exists():
+            rmscript = [rs.stem for rs in rmdir.glob("*.rmscript")]
+    except Exception:
+        pass
+    return sorted(set(shared + local + rmscript))
 
 
 def _write_profile(sanitized_name: str, instructions: str, tools_text: str, voice: str | None = None) -> None:

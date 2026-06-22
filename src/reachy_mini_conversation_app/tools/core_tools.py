@@ -457,19 +457,42 @@ def _load_profile_tools(tool_names: list[str], remote_tool_names: set[str]) -> L
                     file_subpath=f"{tool_name}.py",
                 )
                 loaded_tool_classes.extend(tool_classes)
+                loaded = True
                 action = "Reused" if reused_cache else "Loaded"
                 if source == "file":
                     logger.info("✓ %s external tool: %s", action, tool_name)
                 else:
                     logger.info("✓ %s core tool: %s", action, tool_name)
             except (ModuleNotFoundError, FileNotFoundError):
-                if profile_error:
-                    logger.error(f"❌ Tool '{tool_name}' also not found in shared tools")
-                else:
-                    logger.warning(f"⚠️ Tool '{tool_name}' not found in profile or shared tools")
+                pass  # fall through to the shared rmscript library
             except Exception as e:
                 logger.error(f"❌ Failed to load shared tool '{tool_name}': {_format_error(e)}")
                 logger.error(f"  Module path: {shared_module_path}")
+                loaded = True  # error already reported; skip the not-found message
+
+        if not loaded:
+            # Shared rmscript library: rmscript_tools/<tool_name>.rmscript compiled to a Tool.
+            rmscript_file = config.rmscript_tools_root() / f"{tool_name}.rmscript"
+            if rmscript_file.is_file():
+                from reachy_mini_conversation_app.tools.rmscript_tool import make_rmscript_tool_class
+
+                rmscript_cls = make_rmscript_tool_class(rmscript_file.read_text(encoding="utf-8"), tool_name)
+                if rmscript_cls is None:
+                    raise RuntimeError(f"rmscript tool '{tool_name}' failed to compile (from {rmscript_file})")
+                loaded_tool_classes.append(rmscript_cls)
+                loaded = True
+                logger.info(
+                    "✓ Loaded rmscript tool: %s (from %s, %d IR actions)",
+                    tool_name,
+                    rmscript_file,
+                    len(getattr(rmscript_cls, "_ir", []) or []),
+                )
+
+        if not loaded:
+            if profile_error:
+                logger.error(f"❌ Tool '{tool_name}' also not found in shared tools")
+            else:
+                logger.warning(f"⚠️ Tool '{tool_name}' not found in profile, shared tools, or rmscript library")
 
     return loaded_tool_classes
 

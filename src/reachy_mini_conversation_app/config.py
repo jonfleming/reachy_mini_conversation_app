@@ -488,6 +488,10 @@ class Config:
             return self.user_personalities_root() / tail
         return self.PROFILES_DIRECTORY / profile
 
+    def rmscript_tools_root(self) -> Path:
+        """Shared library directory holding .rmscript-defined tools."""
+        return self.PROFILES_DIRECTORY / "rmscript_tools"
+
 
 config = Config()
 
