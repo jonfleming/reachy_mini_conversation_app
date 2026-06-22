@@ -41,6 +41,7 @@ from reachy_mini_conversation_app.config import (
     refresh_runtime_config_from_env,
     get_available_voices_for_backend,
 )
+from reachy_mini_conversation_app.rmscript_routes import mount_rmscript_routes
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import initialize_tools
 from reachy_mini_conversation_app.personality_routes import mount_personality_routes
@@ -911,6 +912,11 @@ class LocalStream:
                     )
             except Exception:
                 logger.exception("Failed to mount personality routes; the personality UI will be unavailable")
+            try:
+                if self._settings_app is not None:
+                    mount_rmscript_routes(self._settings_app)
+            except Exception:
+                logger.exception("Failed to mount rmscript routes; the behaviors UI will be unavailable")
             self._tasks = [
                 asyncio.create_task(self._run_handler_startup_loop(), name="realtime-handler"),
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
