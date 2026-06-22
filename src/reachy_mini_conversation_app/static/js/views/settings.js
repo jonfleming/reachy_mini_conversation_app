@@ -9,7 +9,7 @@ import {
   saveBackendConfig,
   untilReady,
 } from "../api.js";
-import { BACKENDS } from "../constants.js";
+import { BACKENDS, ROUTES } from "../constants.js";
 import { h } from "../ui.js";
 
 const HF_CONNECTION_MODES = Object.freeze({
@@ -60,6 +60,7 @@ export async function mountSettingsView({ outlet, signal }) {
     ),
     backendSection.element,
     voiceSection.element,
+    buildBehaviorsLinkSection(),
     statusSection.element
   );
   outlet.replaceChildren(view);
@@ -240,6 +241,24 @@ function buildBackendSection({ onSaved } = {}) {
       syncApiKeyVisibility();
     },
   };
+}
+
+function buildBehaviorsLinkSection() {
+  return h(
+    "section",
+    { class: "settings-section" },
+    h("h2", { class: "settings-section-title" }, "Robot behaviors"),
+    h(
+      "p",
+      { class: "settings-hint" },
+      "Create and edit rmscript-defined movements that personalities can use as tools."
+    ),
+    h(
+      "div",
+      { class: "settings-actions" },
+      h("a", { class: "btn btn--primary", href: ROUTES.BEHAVIORS }, "Manage robot behaviors")
+    )
+  );
 }
 
 function buildVoiceSection() {

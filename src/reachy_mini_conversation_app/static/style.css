@@ -1242,3 +1242,77 @@ button {
   50%      { transform: scale(1.04); box-shadow: 0 0 44px color-mix(in srgb, var(--glow) 35%, transparent),
                                                 inset 0 0 36px color-mix(in srgb, var(--glow) 30%, transparent); }
 }
+
+/* Robot Behaviors view */
+.view--behaviors {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.behaviors-toolbar {
+  display: flex;
+}
+
+.behaviors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.behavior-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+}
+
+.behavior-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.behavior-card__name {
+  font-weight: 600;
+}
+
+.behavior-card__desc {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
+.behavior-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.behaviors-editor {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+}
+
+.behaviors-editor__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.behaviors-verify {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 0.9rem;
+  color: var(--text-soft);
+}
+
+.behaviors-verify.is-error {
+  color: #ff6a75;
+}

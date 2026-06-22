@@ -48,6 +48,7 @@ export const ROUTES = Object.freeze({
   TALK: "#/",
   PERSONALITIES: "#/personalities",
   SETTINGS: "#/settings",
+  BEHAVIORS: "#/behaviors",
 });
 
 export function avatarFor(profileName) {

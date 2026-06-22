@@ -76,6 +76,13 @@ export const applyPersonality = (name, { persist = false } = {}) =>
 export const getMicState = () => request("GET", "/mic");
 export const setMicMuted = (muted) => request("POST", "/mic", { body: { muted } });
 
+export const listBehaviors = () => request("GET", "/rmscript/tools");
+export const loadBehavior = (name) => request("GET", `/rmscript/tools/${encodeURIComponent(name)}`);
+export const saveBehavior = (name, source) =>
+  request("POST", `/rmscript/tools/${encodeURIComponent(name)}`, { body: { source } });
+export const deleteBehavior = (name) => request("DELETE", `/rmscript/tools/${encodeURIComponent(name)}`);
+export const verifyRmscript = (source) => request("POST", "/rmscript/verify", { body: { source } });
+
 export const listVoices = () => request("GET", "/voices");
 export const getCurrentVoice = () => request("GET", "/voices/current");
 export const applyVoice = (voice) =>

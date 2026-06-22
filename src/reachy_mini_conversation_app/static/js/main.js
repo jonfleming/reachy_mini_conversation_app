@@ -11,6 +11,7 @@ import { $ } from "./ui.js";
 import { mountHomeView } from "./views/home.js";
 import { mountTalkView } from "./views/talk.js";
 import { mountSettingsView } from "./views/settings.js";
+import { mountBehaviorsView } from "./views/behaviors.js";
 
 const SETTINGS_RETURN_KEY = "settings-return-route";
 
@@ -53,6 +54,7 @@ function boot() {
       [ROUTES.TALK]: (ctx) => mountTalkView(ctx),
       [ROUTES.PERSONALITIES]: (ctx) => mountHomeView({ ...ctx, navigate: router.navigate }),
       [ROUTES.SETTINGS]: (ctx) => mountSettingsView(ctx),
+      [ROUTES.BEHAVIORS]: (ctx) => mountBehaviorsView({ ...ctx, navigate: router.navigate }),
     },
     { fallback: ROUTES.TALK, outlet }
   );
@@ -88,7 +90,10 @@ function boot() {
   const back = $('[data-action="go-back"]');
   if (back) {
     back.addEventListener("click", () => {
-      router.navigate(window.location.hash === ROUTES.SETTINGS ? settingsReturn : ROUTES.TALK);
+      const here = window.location.hash;
+      if (here === ROUTES.SETTINGS) router.navigate(settingsReturn);
+      else if (here === ROUTES.BEHAVIORS) router.navigate(ROUTES.SETTINGS);
+      else router.navigate(ROUTES.TALK);
     });
   }
 
