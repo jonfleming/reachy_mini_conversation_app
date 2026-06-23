@@ -13,10 +13,16 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, Request
+from fastapi import File, FastAPI, Request, UploadFile
 from rmscript import compile_script
 from fastapi.responses import JSONResponse
 
+from .sound_library import (
+    save_sound,
+    delete_sound,
+    list_user_sounds,
+    list_builtin_sounds,
+)
 from .rmscript_library import (
     read_rmscript_tool,
     list_rmscript_tools,
@@ -129,3 +135,25 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
     def _delete(name: str) -> dict:  # type: ignore
         deleted = delete_rmscript_tool(name)
         return {"ok": deleted, "tools": list_rmscript_tools()}
+
+    def _sounds_payload() -> Dict[str, Any]:
+        """User and built-in sound names available to `play`."""
+        return {"user": list_user_sounds(), "builtin": list_builtin_sounds()}
+
+    @app.get("/rmscript/sounds")
+    def _list_sounds() -> dict:  # type: ignore
+        return _sounds_payload()
+
+    @app.post("/rmscript/sounds")
+    async def _upload_sound(file: UploadFile = File(...)) -> Any:
+        data = await file.read()
+        try:
+            name = save_sound(file.filename or "", data)
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        return {"ok": True, "name": name, **_sounds_payload()}
+
+    @app.delete("/rmscript/sounds/{name}")
+    def _delete_sound(name: str) -> dict:  # type: ignore
+        deleted = delete_sound(name)
+        return {"ok": deleted, **_sounds_payload()}

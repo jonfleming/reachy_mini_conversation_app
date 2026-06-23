@@ -84,6 +84,27 @@ export const saveBehavior = (name, source) =>
   request("POST", `/rmscript/tools/${encodeURIComponent(name)}`, { body: { source } });
 export const deleteBehavior = (name) => request("DELETE", `/rmscript/tools/${encodeURIComponent(name)}`);
 export const verifyRmscript = (source) => request("POST", "/rmscript/verify", { body: { source } });
+
+export const listSounds = () => request("GET", "/rmscript/sounds");
+export const deleteSound = (name) =>
+  request("DELETE", `/rmscript/sounds/${encodeURIComponent(name)}`);
+/** Upload a sound file (multipart, so it bypasses the JSON `request` helper). */
+export async function uploadSound(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch("/rmscript/sounds", { method: "POST", body: form });
+  const text = await response.text();
+  let json = null;
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = { raw: text };
+    }
+  }
+  if (!response.ok) throw new HttpError(response.status, json, json?.error || response.statusText);
+  return json;
+}
 // Preview queues the moves and returns immediately with the script's duration (seconds).
 export const previewBehavior = (source) => request("POST", "/rmscript/preview", { body: { source } });
 export const abortBehavior = () => request("POST", "/rmscript/abort");
