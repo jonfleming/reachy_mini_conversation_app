@@ -384,19 +384,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
             logger.debug("inject_blank_nfc_tag: no active connection, skipping")
             return
         logger.info("inject_blank_nfc_tag: injecting blank NFC tag event")
-        # Remove nfc_writer from tools for 2 turns so the LLM cannot call it
-        # before the user finishes describing the personality.
-        self._nfc_collect_turns = 2
-        try:
-            from reachy_mini_conversation_app.tools.core_tools import get_active_tool_specs
-            await self.connection.session.update(
-                session={"type": "realtime", "tools": to_realtime_tools_config(
-                    get_active_tool_specs(self.deps, extra_exclusions=["nfc_writer"])
-                )}
-            )
-            logger.info("inject_blank_nfc_tag: nfc_writer excluded from session tools for 2 turns")
-        except Exception as _te:
-            logger.warning("inject_blank_nfc_tag: failed to update tools: %s", _te)
         event_text = (
             "[System event — follow this exact sequence, do not skip steps:\n"
             "STEP 1 (this turn): An unknown object is on your head. React with curiosity. "
@@ -532,6 +519,15 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         if success:
             self._nfc_transition = True
             logger.info("inject_nfc_write_result: NFC transition started — dialogue paused until personality switch")
+
+            async def _nfc_transition_watchdog() -> None:
+                await asyncio.sleep(20.0)
+                if self._nfc_transition:
+                    logger.warning("inject_nfc_write_result: watchdog resetting stuck _nfc_transition after 30 s")
+                    self._nfc_transition = False
+                    self._nfc_speech_done_event.set()
+
+            asyncio.create_task(_nfc_transition_watchdog(), name="nfc-transition-watchdog")
 
     async def _inject_nfc_ask_again(self) -> None:
         if not self.connection:
@@ -1024,18 +1020,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                         if self._nfc_transition and not self._nfc_speech_done_event.is_set():
                             self._nfc_speech_done_event.set()
                             logger.info("NFC transition: welcome speech done, switch can proceed")
-                        if self._nfc_collect_turns > 0:
-                            self._nfc_collect_turns -= 1
-                            logger.debug("NFC collect turns remaining: %d", self._nfc_collect_turns)
-                            if self._nfc_collect_turns == 0:
-                                logger.info("NFC collect turns done — restoring nfc_writer in session tools")
-                                try:
-                                    from reachy_mini_conversation_app.tools.core_tools import get_active_tool_specs
-                                    await self.connection.session.update(
-                                        session={"type": "realtime", "tools": to_realtime_tools_config(get_active_tool_specs(self.deps))}
-                                    )
-                                except Exception as _te:
-                                    logger.warning("Failed to restore nfc_writer in tools: %s", _te)
                         logger.debug("Response done")
 
                         response = getattr(event, "response", None)

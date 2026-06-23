@@ -35,6 +35,7 @@ move_head
 play_emotion
 stop_dance
 stop_emotion
+nfc_writer
 """
 
 

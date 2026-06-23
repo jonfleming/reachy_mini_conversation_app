@@ -505,7 +505,9 @@ class LocalStream:
         _get_loop = lambda: self._asyncio_loop  # noqa: E731
         _current_rfid_personality: list[str | None] = [None]
         _blank_tag_active: list[bool] = [False]
+        _blank_tag_cooldown_until: list[float] = [0.0]  # prevents re-injection after brief NO_TAG
         _delayed_switch_future: list = [None]
+        _inject_move_future: list = [None]  # tracks _inject_after_move coroutine for cancellation
         _prev_tag: list = [None]  # last NfcTagSnapshot seen by /rfid/poll
 
         # Inject NFC deps into ToolDependencies so nfc_writer can use them
@@ -636,7 +638,11 @@ class LocalStream:
                     if msg.strip() == "NO_TAG":
                         was_blank = _blank_tag_active[0]
                         _blank_tag_active[0] = False
+                        _blank_tag_cooldown_until[0] = time.monotonic() + 3.0
                         handler.deps.blank_tag_present = False
+                        if _inject_move_future[0] is not None:
+                            _inject_move_future[0].cancel()
+                            _inject_move_future[0] = None
                         if _delayed_switch_future[0] is not None:
                             _delayed_switch_future[0].cancel()
                             _delayed_switch_future[0] = None
@@ -694,7 +700,7 @@ class LocalStream:
                                         fut.result(timeout=10)
                                     except Exception as exc:
                                         logger.warning("[RFID] >>> inject_nfc_writing_started FAILED: %s", exc)
-                            elif not _blank_tag_active[0]:
+                            elif not _blank_tag_active[0] and time.monotonic() >= _blank_tag_cooldown_until[0]:
                                 _blank_tag_active[0] = True
                                 logger.info("[RFID] >>> blank tag detected — injecting event to LLM")
                                 loop = _get_loop()
@@ -832,9 +838,12 @@ class LocalStream:
                                 loop.call_soon_threadsafe(_arm_gate)
 
                                 async def _inject_after_move(dur=move_duration, s=success, m=msg):
-                                    await _asyncio.sleep(dur)
-                                    await handler.inject_nfc_write_result(s, m)
-                                _asyncio.run_coroutine_threadsafe(_inject_after_move(), loop)
+                                    try:
+                                        await _asyncio.sleep(dur)
+                                        await handler.inject_nfc_write_result(s, m)
+                                    finally:
+                                        _inject_move_future[0] = None
+                                _inject_move_future[0] = _asyncio.run_coroutine_threadsafe(_inject_after_move(), loop)
                             else:
                                 try:
                                     fut = _asyncio.run_coroutine_threadsafe(

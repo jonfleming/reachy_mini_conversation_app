@@ -534,7 +534,23 @@ def get_active_tool_specs(deps: ToolDependencies, extra_exclusions: list[str] | 
         exclusion_list.append("head_tracking")
     if deps.rfid_serial is None:
         exclusion_list.append("nfc_writer")
-    return get_tool_specs(exclusion_list)
+    specs = get_tool_specs(exclusion_list)
+    # nfc_writer is a system-level tool available whenever the RFID reader is connected,
+    # even if the active profile's tools.txt doesn't list it.
+    if deps.rfid_serial is not None and "nfc_writer" not in exclusion_list:
+        if not any(s.get("name") == "nfc_writer" for s in specs):
+            if "nfc_writer" not in ALL_TOOLS:
+                try:
+                    from reachy_mini_conversation_app.tools.nfc_writer import NfcWriter
+                    _inst = NfcWriter()
+                    ALL_TOOLS["nfc_writer"] = _inst
+                    ALL_TOOL_SPECS.append(_inst.spec())
+                    logger.info("get_active_tool_specs: auto-registered nfc_writer (not in profile tools.txt)")
+                except Exception as _exc:
+                    logger.warning("get_active_tool_specs: failed to auto-register nfc_writer: %s", _exc)
+            if "nfc_writer" in ALL_TOOLS:
+                specs = specs + [ALL_TOOLS["nfc_writer"].spec()]
+    return specs
 
 
 # Dispatcher
