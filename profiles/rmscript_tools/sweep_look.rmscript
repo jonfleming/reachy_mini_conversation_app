@@ -4,4 +4,5 @@
 turn left 162 superfast
 wait 1s
 picture
+play go_sleep
 turn center superfast

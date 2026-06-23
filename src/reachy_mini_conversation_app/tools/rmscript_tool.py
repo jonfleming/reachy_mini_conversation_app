@@ -14,6 +14,7 @@ import base64
 import asyncio
 import logging
 from typing import Any, Dict, List, Tuple, ClassVar
+from pathlib import Path
 
 import numpy.typing as npt
 from rmscript import (
@@ -24,6 +25,8 @@ from rmscript import (
     compile_script,
 )
 
+from reachy_mini.utils.constants import ASSETS_ROOT_PATH
+from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 from reachy_mini_conversation_app.dance_emotion_moves import GotoQueueMove
 from reachy_mini_conversation_app.camera_frame_encoding import save_debug_snapshot
@@ -32,6 +35,29 @@ from reachy_mini_conversation_app.camera_frame_encoding import save_debug_snapsh
 logger = logging.getLogger(__name__)
 
 Antennas = Tuple[float, float]
+
+# Audio extensions searched when resolving a bare `play <name>` sound token.
+_SOUND_EXTENSIONS = ("wav", "mp3", "ogg")
+
+
+def _resolve_sound(sound_name: str) -> str | None:
+    """Resolve a bare rmscript sound name to a playable reference, or None.
+
+    Searches the shared library's ``sounds/`` directory first (returns an
+    absolute path, which the SDK uploads to the daemon when wireless), then the
+    robot's built-in assets (returns the bare ``<name>.<ext>`` so the daemon
+    resolves it locally without an upload).
+    """
+    sounds_dir = config.rmscript_tools_root() / "sounds"
+    for ext in _SOUND_EXTENSIONS:
+        candidate = sounds_dir / f"{sound_name}.{ext}"
+        if candidate.is_file():
+            return str(candidate)
+    assets = Path(ASSETS_ROOT_PATH)
+    for ext in _SOUND_EXTENSIONS:
+        if (assets / f"{sound_name}.{ext}").is_file():
+            return f"{sound_name}.{ext}"
+    return None
 
 
 class RmscriptTool(Tool):
@@ -68,7 +94,11 @@ class RmscriptTool(Tool):
                 if image is not None:
                     images.append(image)
             elif isinstance(action, IRPlaySoundAction):
-                mini.media.play_sound(action.sound_name)
+                sound = _resolve_sound(action.sound_name)
+                if sound is None:
+                    logger.warning("rmscript sound %r not found; skipping", action.sound_name)
+                else:
+                    mini.media.play_sound(sound)
                 if action.blocking and action.duration:
                     await asyncio.sleep(action.duration)
 

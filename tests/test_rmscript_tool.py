@@ -114,6 +114,54 @@ def test_queue_rmscript_compile_failure_does_not_touch_robot() -> None:
     assert queued == []
 
 
+def test_resolve_sound_prefers_library_sounds_dir(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file in the library sounds/ dir resolves to its absolute path."""
+    sounds = tmp_path / "sounds"
+    sounds.mkdir()
+    (sounds / "cheer.wav").write_bytes(b"")
+    monkeypatch.setattr(rmscript_tool.config, "rmscript_tools_root", lambda: tmp_path)
+    assert rmscript_tool._resolve_sound("cheer") == str(sounds / "cheer.wav")
+
+
+def test_resolve_sound_falls_back_to_builtin_assets(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A built-in asset resolves to a bare `<name>.<ext>` for daemon-side lookup."""
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "wake_up.wav").write_bytes(b"")
+    monkeypatch.setattr(rmscript_tool.config, "rmscript_tools_root", lambda: tmp_path / "lib")
+    monkeypatch.setattr(rmscript_tool, "ASSETS_ROOT_PATH", str(assets))
+    assert rmscript_tool._resolve_sound("wake_up") == "wake_up.wav"
+
+
+def test_resolve_sound_missing_returns_none(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unknown sound name resolves to None."""
+    monkeypatch.setattr(rmscript_tool.config, "rmscript_tools_root", lambda: tmp_path / "lib")
+    monkeypatch.setattr(rmscript_tool, "ASSETS_ROOT_PATH", str(tmp_path / "assets"))
+    assert rmscript_tool._resolve_sound("nope") is None
+
+
+def test_play_sound_resolves_and_plays(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `play` action resolves the name and calls media.play_sound with it."""
+    queued: List[Any] = []
+    deps = _make_deps(queued)
+    monkeypatch.setattr(rmscript_tool, "_resolve_sound", lambda name: f"/abs/{name}.wav")
+    cls = make_rmscript_tool_class('"t"\nplay cheer', "t")
+    assert cls is not None
+    _run(cls(), deps)
+    deps.reachy_mini.media.play_sound.assert_called_once_with("/abs/cheer.wav")
+
+
+def test_play_sound_missing_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unresolved sound is skipped without calling media.play_sound."""
+    queued: List[Any] = []
+    deps = _make_deps(queued)
+    monkeypatch.setattr(rmscript_tool, "_resolve_sound", lambda name: None)
+    cls = make_rmscript_tool_class('"t"\nplay cheer', "t")
+    assert cls is not None
+    _run(cls(), deps)
+    deps.reachy_mini.media.play_sound.assert_not_called()
+
+
 def test_picture_returns_b64(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `picture` action returns the latest camera frame as base64 JPEG."""
     queued: List[Any] = []
