@@ -35,7 +35,7 @@ dependencies = [
     # rmscript DSL compiler (standalone repo) for .rmscript-defined tools, pinned.
     # For local development against a checkout:
     #   rmscript = { path = "../rmscript", editable = true }
-    "rmscript @ git+https://github.com/scienceetonnante/reachy-mini-script.git@v0.1.1",
+    "rmscript @ git+https://github.com/scienceetonnante/reachy-mini-script.git@v0.1.2",
 ]
 
 [project.optional-dependencies]
