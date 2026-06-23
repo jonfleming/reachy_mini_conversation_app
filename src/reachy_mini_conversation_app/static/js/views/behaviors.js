@@ -18,6 +18,7 @@ import {
   showErrorLine,
   clearError,
 } from "../components/rmscript-editor.js";
+import { openScriptManual } from "../components/script-manual.js";
 
 const NEW_TEMPLATE = '"Describe what this behavior does (the AI reads this)"\n\nlook left\nwait 1s\nlook right\n';
 
@@ -37,7 +38,8 @@ export async function mountBehaviorsView({ outlet, signal }) {
     h(
       "div",
       { class: "behaviors-toolbar" },
-      h("button", { class: "btn btn--primary", onClick: () => openEditor(null) }, "New behavior")
+      h("button", { class: "btn btn--primary", onClick: () => openEditor(null) }, "New behavior"),
+      h("button", { class: "btn btn--ghost", onClick: () => openScriptManual() }, "📖 Script reference")
     ),
     listEl,
     editorHost
