@@ -41,10 +41,21 @@ const errorLineField = StateField.define({
 // --- rmscript syntax: a context-aware stream tokenizer ---
 const rmscriptLanguage = StreamLanguage.define({
   startState() {
-    return { context: null };
+    return { context: null, sawContent: false };
   },
   token(stream, state) {
     if (stream.eatSpace()) return null;
+
+    // First non-blank token: a leading quoted string is the tool description
+    // (the prose the AI reads). Render it as a muted, italic docstring.
+    if (!state.sawContent) {
+      state.sawContent = true;
+      if (stream.peek() === '"') {
+        stream.match(/"[^"\n]*"?/);
+        state.context = null;
+        return "docString";
+      }
+    }
 
     // Comments
     if (stream.match(/#.*/)) {
@@ -72,7 +83,7 @@ const rmscriptLanguage = StreamLanguage.define({
     // Keywords and identifiers
     if (stream.match(/[a-zA-Z_][a-zA-Z0-9_]*/)) {
       const word = stream.current().toLowerCase();
-      if (/^(look|tilt|body|head|antenna)$/.test(word)) {
+      if (/^(look|tilt|body|head|antenna|picture|play)$/.test(word)) {
         state.context = "action";
         return "keyword";
       }
@@ -84,7 +95,7 @@ const rmscriptLanguage = StreamLanguage.define({
         state.context = "repeat";
         return "meta";
       }
-      if (/^(and|wait|turn)$/.test(word)) {
+      if (/^(and|wait|turn|pause)$/.test(word)) {
         state.context = word === "turn" ? "action" : null;
         return "meta";
       }
@@ -106,6 +117,8 @@ const rmscriptLanguage = StreamLanguage.define({
     state.context = null;
     return null;
   },
+  // Map our custom token name to a tag the highlight style can target.
+  tokenTable: { docString: tags.special(tags.string) },
 });
 
 const rmscriptHighlightStyle = HighlightStyle.define([
@@ -115,6 +128,7 @@ const rmscriptHighlightStyle = HighlightStyle.define([
   { tag: tags.number, color: "#4daaff" }, // blue: durations
   { tag: tags.propertyName, color: "#f38236" }, // brown: quantities
   { tag: tags.comment, color: "#888888", fontStyle: "italic" }, // gray
+  { tag: tags.special(tags.string), color: "#888888", fontStyle: "italic" }, // muted: first-line tool description
   { tag: tags.variableName, color: "#333333" }, // dark gray
 ]);
 
