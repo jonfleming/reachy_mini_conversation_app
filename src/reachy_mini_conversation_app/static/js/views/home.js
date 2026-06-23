@@ -17,6 +17,7 @@ import {
 } from "../constants.js";
 import { $, h, prettifyProfileName } from "../ui.js";
 import { openProfileModal } from "../components/profile-modal.js";
+import { confirmDialog } from "../components/confirm-dialog.js";
 import { setPendingApply } from "../pending-apply.js";
 import { setPersonality } from "../personality-badge.js";
 
@@ -193,7 +194,13 @@ export async function mountHomeView({ outlet, signal, navigate }) {
   }
 
   async function handleDeleteClick(name) {
-    if (!window.confirm(`Delete personality "${prettifyProfileName(name)}"? This cannot be undone.`)) return;
+    const ok = await confirmDialog({
+      title: "Delete personality?",
+      message: `"${prettifyProfileName(name)}" will be permanently removed.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok || signal.aborted) return;
     status.classList.remove("is-warning", "is-error");
     try {
       await deletePersonality(name);

@@ -3,6 +3,7 @@
 
 import { listSounds, uploadSound, deleteSound, describeError } from "../api.js";
 import { h } from "../ui.js";
+import { confirmDialog } from "./confirm-dialog.js";
 
 /** Open the sound library modal. Resolves when it closes. */
 export function openSoundLibrary() {
@@ -94,7 +95,13 @@ export function openSoundLibrary() {
     }
 
     async function removeSound(name) {
-      if (!window.confirm(`Remove sound "${name}"?`)) return;
+      const ok = await confirmDialog({
+        title: "Remove sound?",
+        message: `"${name}" will be deleted from your sound library.`,
+        confirmLabel: "Remove",
+        danger: true,
+      });
+      if (!ok) return;
       status.classList.remove("is-error");
       try {
         render(await deleteSound(name));

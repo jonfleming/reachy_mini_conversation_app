@@ -429,6 +429,16 @@ button {
   color: var(--text);
 }
 
+.btn--danger {
+  background: #e5484d;
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #e5484d 88%, black);
+}
+
 .route-error {
   margin: 32px;
   padding: 16px;
@@ -891,6 +901,11 @@ button {
   margin: 0 0 16px;
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+/* Confirmation dialog: a compact modal that replaces window.confirm. */
+.modal--confirm {
+  width: min(420px, 100%);
 }
 
 /* Script reference modal: wider, with a sticky title bar and close button. */
@@ -1533,6 +1548,16 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.behaviors-notice {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.behaviors-notice.is-error {
+  color: #e5484d;
 }
 
 .behaviors-list {

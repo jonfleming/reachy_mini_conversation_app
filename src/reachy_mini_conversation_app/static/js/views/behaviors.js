@@ -20,12 +20,21 @@ import {
 } from "../components/rmscript-editor.js";
 import { openScriptManual } from "../components/script-manual.js";
 import { openSoundLibrary } from "../components/sound-library.js";
+import { confirmDialog } from "../components/confirm-dialog.js";
 
 const NEW_TEMPLATE = '"Describe what this behavior does (the AI reads this)"\n\nlook left\nwait 1s\nlook right\n';
 
 export async function mountBehaviorsView({ outlet, signal }) {
   const listEl = h("div", { class: "behaviors-list" }, h("p", { class: "muted" }, "Loading…"));
   const editorHost = h("div", { class: "behaviors-editor", hidden: true });
+  const noticeEl = h("p", { class: "behaviors-notice", role: "status", "aria-live": "polite", hidden: true });
+
+  // Inline replacement for window.alert (suppressed in the embedded app host).
+  function showNotice(message, isError = true) {
+    noticeEl.textContent = message;
+    noticeEl.classList.toggle("is-error", isError);
+    noticeEl.hidden = false;
+  }
 
   const view = h(
     "section",
@@ -43,6 +52,7 @@ export async function mountBehaviorsView({ outlet, signal }) {
       h("button", { class: "btn btn--ghost", onClick: () => openSoundLibrary() }, "🔊 Sounds"),
       h("button", { class: "btn btn--ghost", onClick: () => openScriptManual() }, "📖 Script reference")
     ),
+    noticeEl,
     listEl,
     editorHost
   );
@@ -114,13 +124,20 @@ export async function mountBehaviorsView({ outlet, signal }) {
   }
 
   async function removeBehavior(name) {
-    if (!window.confirm(`Delete behavior "${name}"?`)) return;
+    const ok = await confirmDialog({
+      title: "Delete behavior?",
+      message: `"${name}" will be permanently removed.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deleteBehavior(name);
     } catch (error) {
-      window.alert(`Failed to delete: ${describeError(error)}`);
+      showNotice(`Failed to delete: ${describeError(error)}`);
       return;
     }
+    noticeEl.hidden = true;
     await refreshList();
   }
 
@@ -131,7 +148,7 @@ export async function mountBehaviorsView({ outlet, signal }) {
       try {
         source = (await loadBehavior(name)).source || "";
       } catch (error) {
-        window.alert(`Failed to load: ${describeError(error)}`);
+        showNotice(`Failed to load: ${describeError(error)}`);
         return;
       }
       if (signal.aborted) return;
