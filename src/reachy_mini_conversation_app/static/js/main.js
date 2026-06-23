@@ -74,6 +74,16 @@ function boot() {
     });
   }
 
+  // Robot Behaviors is a full view reached from the header; clicking the
+  // icon again returns to the conversation.
+  const behaviors = $('[data-action="open-behaviors"]');
+  if (behaviors) {
+    behaviors.addEventListener("click", () => {
+      if (window.location.hash === ROUTES.BEHAVIORS) router.navigate(ROUTES.TALK);
+      else router.navigate(ROUTES.BEHAVIORS);
+    });
+  }
+
   const brand = $('[data-action="go-home"]');
   if (brand) {
     brand.addEventListener("click", (event) => {
@@ -92,7 +102,6 @@ function boot() {
     back.addEventListener("click", () => {
       const here = window.location.hash;
       if (here === ROUTES.SETTINGS) router.navigate(settingsReturn);
-      else if (here === ROUTES.BEHAVIORS) router.navigate(ROUTES.SETTINGS);
       else router.navigate(ROUTES.TALK);
     });
   }
@@ -105,6 +114,9 @@ function boot() {
       const onSettings = route === ROUTES.SETTINGS;
       gear.classList.toggle("is-active", onSettings);
       gear.setAttribute("aria-label", onSettings ? "Close settings" : "Open settings");
+    }
+    if (behaviors) {
+      behaviors.classList.toggle("is-active", route === ROUTES.BEHAVIORS);
     }
     if (back) {
       back.hidden = route === ROUTES.TALK;

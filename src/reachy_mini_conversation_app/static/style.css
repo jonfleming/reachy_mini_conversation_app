@@ -298,8 +298,16 @@ button {
   outline-offset: 2px;
 }
 
+/* Groups the header's right-side controls so they stay together. */
+.app-shell__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Accent tint + rotation signal the gear also closes Settings when active. */
-.app-shell__gear.is-active {
+.app-shell__gear.is-active,
+.app-shell__behaviors.is-active {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   background: color-mix(in srgb, var(--accent) 14%, var(--bg-elev));
