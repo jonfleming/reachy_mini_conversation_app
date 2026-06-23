@@ -460,12 +460,7 @@ class GeminiLiveHandler(ConversationHandler):
         try:
             send_result_to_model = not bg_tool.is_idle_tool_call
 
-            if (
-                send_result_to_model
-                and bg_tool.tool_name == "camera"
-                and isinstance(tool_result, dict)
-                and "b64_im" in tool_result
-            ):
+            if send_result_to_model and isinstance(tool_result, dict) and "b64_im" in tool_result:
                 b64_im = tool_result.pop("b64_im")
                 if not tool_result:
                     tool_result = {"status": "image_captured"}

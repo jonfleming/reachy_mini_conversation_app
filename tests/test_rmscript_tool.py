@@ -120,7 +120,7 @@ def test_picture_returns_b64(monkeypatch: pytest.MonkeyPatch) -> None:
     deps = _make_deps(queued)
     deps.camera_worker = MagicMock()
     deps.camera_worker.get_latest_frame.return_value = np.zeros((4, 4, 3), dtype=np.uint8)
-    monkeypatch.setattr(rmscript_tool, "encode_bgr_frame_as_jpeg", lambda _frame: b"jpegbytes")
+    monkeypatch.setattr(rmscript_tool, "save_debug_snapshot", lambda _frame, _label: b"jpegbytes")
 
     cls = make_rmscript_tool_class('"t"\npicture', "t")
     assert cls is not None

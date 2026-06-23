@@ -46,6 +46,10 @@ logger = logging.getLogger(__name__)
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
 
+# Stand-in textual result for any tool that returns a b64_im image; the image
+# itself is injected as a separate user message right after.
+IMAGE_PLACEHOLDER_RESULT: Final[dict[str, str]] = {"status": "Image captured, will be provided next."}
+
 
 class InputTranscriptChunksByItem(BaseModel):
     """Current item_id and its accumulated deltas. Only one item at a time."""
@@ -163,16 +167,6 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
         self._turn_user_done_at: float | None = None
         self._turn_response_created_at: float | None = None
         self._turn_first_audio_at: float | None = None
-
-    @staticmethod
-    def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
-        """Remove bulky transport-only fields before echoing tool output back to the model."""
-        if tool_name == "camera" and "b64_im" in tool_result:
-            sanitized = dict(tool_result)
-            sanitized.pop("b64_im", None)
-            sanitized["image_attached"] = True
-            return sanitized
-        return tool_result
 
     def _normalize_startup_voice(self, voice: str | None) -> str | None:
         """Return a valid persisted startup voice for this backend, or None."""
@@ -570,17 +564,17 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
 
     async def _handle_tool_result(self, bg_tool: ToolNotification) -> None:
         """Process the result of a tool call."""
+        # An "image tool" is any tool returning b64_im. Its textual result is
+        # replaced by a placeholder and the image injected separately below.
+        is_image_tool = False
         if bg_tool.error is not None:
             logger.error("Tool '%s' (id=%s) failed with error: %s", bg_tool.tool_name, bg_tool.id, bg_tool.error)
             tool_result = {"error": bg_tool.error}
             tool_result_for_model = tool_result
         elif bg_tool.result is not None:
             tool_result = bg_tool.result
-            tool_result_for_model = (
-                self._sanitize_tool_result_for_model(bg_tool.tool_name, tool_result)
-                if isinstance(tool_result, dict)
-                else tool_result
-            )
+            is_image_tool = isinstance(tool_result, dict) and "b64_im" in tool_result
+            tool_result_for_model = IMAGE_PLACEHOLDER_RESULT if is_image_tool else tool_result
             logger.info(
                 "Tool '%s' (id=%s) executed successfully.",
                 bg_tool.tool_name,
@@ -641,7 +635,7 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 ),
             )
 
-            if model_result_submitted and bg_tool.tool_name == "camera" and "b64_im" in tool_result:
+            if model_result_submitted and is_image_tool:
                 # use raw base64, don't json.dumps (which adds quotes)
                 b64_im = tool_result["b64_im"]
                 if not isinstance(b64_im, str):
@@ -665,14 +659,16 @@ class BaseRealtimeHandler(ConversationHandler, ABC):
                 )
                 if isinstance(image_width, int) and isinstance(image_height, int):
                     logger.info(
-                        "Added camera image to conversation frame=%sx%s jpeg_bytes=%s",
+                        "Added %s image to conversation frame=%sx%s jpeg_bytes=%s",
+                        bg_tool.tool_name,
                         image_width,
                         image_height,
                         jpeg_bytes,
                     )
                 else:
                     logger.info(
-                        "Added camera image to conversation jpeg_bytes=%s",
+                        "Added %s image to conversation jpeg_bytes=%s",
+                        bg_tool.tool_name,
                         jpeg_bytes,
                     )
 

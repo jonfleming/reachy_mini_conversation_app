@@ -1,10 +1,29 @@
 """Helpers for encoding camera frames."""
 
+import logging
+import tempfile
+from pathlib import Path
 from fractions import Fraction
 
 import av
 import numpy as np
 from numpy.typing import NDArray
+
+
+logger = logging.getLogger(__name__)
+
+
+def save_debug_snapshot(frame: NDArray[np.uint8], label: str) -> bytes:
+    """Encode a deliberate camera snapshot, save a debug copy to TMPDIR, return the JPEG.
+
+    Use at intentional capture points (camera tool, rmscript picture) — not the
+    continuous video loop, which would write a file every frame.
+    """
+    jpeg = encode_bgr_frame_as_jpeg(frame)
+    path = Path(tempfile.gettempdir()) / f"reachy_camera_{label}.jpg"
+    path.write_bytes(jpeg)
+    logger.info("camera snapshot '%s' (%dx%d) saved to %s", label, frame.shape[1], frame.shape[0], path)
+    return jpeg
 
 
 def encode_bgr_frame_as_jpeg(frame: NDArray[np.uint8]) -> bytes:

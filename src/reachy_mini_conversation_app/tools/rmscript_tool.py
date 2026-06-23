@@ -26,7 +26,7 @@ from rmscript import (
 
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 from reachy_mini_conversation_app.dance_emotion_moves import GotoQueueMove
-from reachy_mini_conversation_app.camera_frame_encoding import encode_bgr_frame_as_jpeg
+from reachy_mini_conversation_app.camera_frame_encoding import save_debug_snapshot
 
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,8 @@ class RmscriptTool(Tool):
         if frame is None:
             logger.warning("rmscript picture skipped: no frame available")
             return None
-        return base64.b64encode(encode_bgr_frame_as_jpeg(frame)).decode("utf-8")
+        jpeg = save_debug_snapshot(frame, self.name)
+        return base64.b64encode(jpeg).decode("utf-8")
 
 
 def make_rmscript_tool_class(source: str, tool_name: str) -> type[RmscriptTool] | None:
