@@ -46,12 +46,17 @@ export async function mountBehaviorsView({ outlet, signal }) {
 
   let editor = null;
   let verifyTimer = null;
+  let previewTimer = null;
   let previewing = false;
 
   function destroyEditor() {
     if (verifyTimer) {
       clearTimeout(verifyTimer);
       verifyTimer = null;
+    }
+    if (previewTimer) {
+      clearTimeout(previewTimer);
+      previewTimer = null;
     }
     if (previewing) {
       previewing = false;
@@ -196,35 +201,43 @@ export async function mountBehaviorsView({ outlet, signal }) {
     editor = createRmscriptEditor(editorMount, source, { onChange: scheduleVerify });
     runVerify(source);
 
+    // Reset the buttons to idle; pass a status message, or null to leave it as-is.
+    function endPreview(message) {
+      if (previewTimer) {
+        clearTimeout(previewTimer);
+        previewTimer = null;
+      }
+      previewing = false;
+      stopBtn.disabled = true;
+      previewBtn.disabled = !valid;
+      if (message !== null) {
+        status.classList.remove("is-error");
+        status.textContent = message;
+      }
+    }
+
     previewBtn.addEventListener("click", async () => {
       previewing = true;
       previewBtn.disabled = true;
       stopBtn.disabled = false;
       status.classList.remove("is-error");
       status.textContent = "Playing on robot…";
+      let res;
       try {
-        const res = await previewBehavior(getContent(editor));
-        if (res?.ok === false) {
-          status.classList.add("is-error");
-          status.textContent = "Preview failed (script did not run).";
-        } else {
-          status.textContent = res?.aborted ? "Stopped." : "Done.";
-        }
+        res = await previewBehavior(getContent(editor));
       } catch (error) {
+        endPreview(null);
         status.classList.add("is-error");
-        status.textContent =
-          error?.body?.error === "loop_unavailable" || error?.body?.error === "preview_unavailable"
-            ? "Robot not available for preview."
-            : `Preview failed: ${describeError(error)}`;
-      } finally {
-        previewing = false;
-        stopBtn.disabled = true;
-        previewBtn.disabled = !valid;
+        status.textContent = `Preview failed: ${describeError(error)}`;
+        return;
       }
+      if (signal.aborted || !editor) return;
+      // The moves are queued; flip back to idle when the motion finishes on its own.
+      previewTimer = setTimeout(() => endPreview("Done."), Math.ceil((res?.duration || 0) * 1000));
     });
 
     stopBtn.addEventListener("click", () => {
-      stopBtn.disabled = true;
+      endPreview("Stopped.");
       abortBehavior().catch(() => {});
     });
 

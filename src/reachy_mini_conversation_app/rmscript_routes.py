@@ -3,14 +3,13 @@
 Exposes compile-checking and CRUD endpoints for .rmscript-defined tools, plus
 preview/abort endpoints that play a script on the robot. Save rejects sources
 that fail to compile, so the library never holds a tool that would hard-fail
-the registry. Preview/abort run on the LocalStream loop via the supplied
-callables; without them (e.g. in tests) those endpoints report unavailable.
+the registry. Preview queues the script's moves on the (thread-safe) movement
+manager and returns immediately; abort clears the queue and restores tracking.
 """
 
 from __future__ import annotations
-import asyncio
 import logging
-from typing import Any, Dict, List, Callable, Optional, Coroutine
+from typing import Any, Dict, List
 
 from fastapi import FastAPI, Request
 from rmscript import compile_script
@@ -22,6 +21,8 @@ from .rmscript_library import (
     write_rmscript_tool,
     delete_rmscript_tool,
 )
+from .tools.rmscript_tool import queue_rmscript
+from .conversation_handler import ConversationHandler
 
 
 logger = logging.getLogger(__name__)
@@ -29,50 +30,40 @@ logger = logging.getLogger(__name__)
 
 def _dump(items: Any) -> List[Dict[str, Any]]:
     """Serialize rmscript diagnostics (errors/warnings) to plain dicts."""
-    return [
-        {
-            "line": getattr(i, "line", None),
-            "column": getattr(i, "column", None),
-            "message": getattr(i, "message", str(i)),
-        }
-        for i in items
-    ]
+    return [{"line": i.line, "column": i.column, "message": i.message} for i in items]
 
 
-def mount_rmscript_routes(
-    app: FastAPI,
-    *,
-    get_loop: Callable[[], asyncio.AbstractEventLoop | None] | None = None,
-    preview_rmscript: Callable[[str], Coroutine[Any, Any, dict[str, Any]]] | None = None,
-    abort_preview: Callable[[], Coroutine[Any, Any, dict[str, Any]]] | None = None,
-) -> None:
-    """Register shared rmscript tool library endpoints on a FastAPI app."""
+def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
+    """Register shared rmscript tool library endpoints on a FastAPI app.
 
-    def _schedule(coro: Coroutine[Any, Any, dict[str, Any]]) -> Optional["asyncio.Future[dict[str, Any]]"]:
-        """Run a robot-side coroutine on the LocalStream loop, or None if unavailable."""
-        loop = get_loop() if get_loop else None
-        if loop is None:
-            return None
-        return asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
+    Preview/abort use the handler's robot dependencies directly; the movement
+    queue and head-tracking toggle are thread-safe, so no event loop is needed.
+    """
+    # Head-tracking state saved when a preview starts, restored on abort.
+    saved_tracking: Dict[str, bool | None] = {"value": None}
 
     @app.post("/rmscript/preview")
     async def _preview(request: Request) -> Any:
-        if preview_rmscript is None:
-            return JSONResponse({"ok": False, "error": "preview_unavailable"}, status_code=503)
-        raw = await request.json()
-        fut = _schedule(preview_rmscript(str(raw.get("source", ""))))
-        if fut is None:
-            return JSONResponse({"ok": False, "error": "loop_unavailable"}, status_code=503)
-        return await fut
+        deps = handler.deps
+        source = str((await request.json()).get("source", ""))
+        result = queue_rmscript(source, deps)
+        if not result["ok"]:
+            return JSONResponse(result, status_code=400)
+        cam = deps.camera_worker
+        if cam is not None and saved_tracking["value"] is None:
+            saved_tracking["value"] = cam.is_head_tracking_enabled
+            cam.set_head_tracking_enabled(False)
+        return result
 
     @app.post("/rmscript/abort")
-    async def _abort() -> Any:
-        if abort_preview is None:
-            return JSONResponse({"ok": False, "error": "preview_unavailable"}, status_code=503)
-        fut = _schedule(abort_preview())
-        if fut is None:
-            return JSONResponse({"ok": False, "error": "loop_unavailable"}, status_code=503)
-        return await fut
+    async def _abort() -> dict:  # type: ignore
+        deps = handler.deps
+        deps.movement_manager.clear_move_queue()
+        cam = deps.camera_worker
+        if cam is not None and saved_tracking["value"] is not None:
+            cam.set_head_tracking_enabled(saved_tracking["value"])
+            saved_tracking["value"] = None
+        return {"ok": True}
 
     @app.post("/rmscript/verify")
     async def _verify(request: Request) -> dict:  # type: ignore

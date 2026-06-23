@@ -165,27 +165,33 @@ def make_rmscript_tool_class(source: str, tool_name: str) -> type[RmscriptTool] 
     )
 
 
-async def run_rmscript_preview(source: str, deps: ToolDependencies) -> Dict[str, Any]:
-    """Play an rmscript source on the robot as an interrupting preview.
+def queue_rmscript(source: str, deps: ToolDependencies) -> Dict[str, Any]:
+    """Compile an rmscript and queue its moves for fire-and-forget preview.
 
-    Clears the movement queue and pauses head tracking for the script's duration,
-    runs it through the normal tool path, then restores head tracking and clears
-    the queue (so an aborting cancel also stops motion). Returns ``compile_failed``
-    without touching the robot if the source does not compile.
+    Clears the movement queue, then enqueues every move up front; the movement
+    worker plays them back-to-back honoring each duration, so no host-side pacing
+    is needed. Pictures and sounds are skipped (there is no timeline to align
+    them to). Returns ``{"ok": True, "duration": <seconds>}`` or, on a compile
+    failure, ``{"ok": False, "error": "compile_failed"}`` without touching the robot.
     """
     cls = make_rmscript_tool_class(source, "preview")
     if cls is None:
         return {"ok": False, "error": "compile_failed"}
-    mm = deps.movement_manager
-    cam = deps.camera_worker
-    prior_tracking = cam.is_head_tracking_enabled if cam is not None else None
-    mm.clear_move_queue()
-    if cam is not None:
-        cam.set_head_tracking_enabled(False)
-    try:
-        result = await cls()(deps)
-        return {"ok": True, **result}
-    finally:
-        mm.clear_move_queue()
-        if cam is not None and prior_tracking is not None:
-            cam.set_head_tracking_enabled(prior_tracking)
+
+    mini = deps.reachy_mini
+    head: npt.NDArray[Any] = mini.get_current_head_pose()
+    head_joints, antenna_joints = mini.get_current_joint_positions()
+    antennas: Antennas = (antenna_joints[0], antenna_joints[1])  # [right, left]
+    body_yaw: float = head_joints[0]
+
+    tool = cls()
+    deps.movement_manager.clear_move_queue()
+    total = 0.0
+    for action in cls._ir:
+        if isinstance(action, IRAction):
+            head, antennas, body_yaw = tool._queue_action(deps, action, head, antennas, body_yaw)
+            total += action.duration
+        elif isinstance(action, IRWaitAction):
+            tool._queue_move(deps, head, antennas, body_yaw, action.duration)
+            total += action.duration
+    return {"ok": True, "duration": total}

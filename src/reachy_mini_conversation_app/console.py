@@ -10,7 +10,7 @@ import time
 import asyncio
 import logging
 import threading
-from typing import Any, List, Optional
+from typing import List, Optional
 from pathlib import Path
 from collections.abc import Callable, AsyncGenerator
 
@@ -45,7 +45,6 @@ from reachy_mini_conversation_app.rmscript_routes import mount_rmscript_routes
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import initialize_tools
 from reachy_mini_conversation_app.personality_routes import mount_personality_routes
-from reachy_mini_conversation_app.tools.rmscript_tool import run_rmscript_preview
 from reachy_mini_conversation_app.audio.startup_config import apply_audio_startup_config
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
 
@@ -199,7 +198,6 @@ class LocalStream:
         self._instance_path: Optional[str] = instance_path
         self._settings_initialized = False
         self._asyncio_loop = None
-        self._preview_task: "asyncio.Task[Any] | None" = None  # in-flight rmscript preview
         self._mic_muted = False  # mic starts live; the UI toggles it via /mic
         self._active_backend_name = get_backend_choice()
         self._backend_connection_state = "not_started"
@@ -225,38 +223,6 @@ class LocalStream:
     def seconds_since_activity(self) -> float:
         """Seconds since the live handler last saw conversation activity."""
         return time.monotonic() - self.handler.last_activity_time
-
-    async def preview_rmscript(self, source: str) -> dict[str, Any]:
-        """Play an rmscript source on the robot, cancelling any in-flight preview."""
-        await self._cancel_preview_task()
-        deps = getattr(self.handler, "deps", None)
-        if deps is None:
-            return {"ok": False, "error": "handler_unavailable"}
-        self._preview_task = asyncio.current_task()
-        try:
-            return await run_rmscript_preview(source, deps)
-        except asyncio.CancelledError:
-            return {"ok": True, "aborted": True}
-        finally:
-            self._preview_task = None
-
-    async def abort_preview(self) -> dict[str, Any]:
-        """Cancel a running preview (its cleanup restores tracking) and clear motion."""
-        await self._cancel_preview_task()
-        deps = getattr(self.handler, "deps", None)
-        if deps is not None:
-            deps.movement_manager.clear_move_queue()
-        return {"ok": True}
-
-    async def _cancel_preview_task(self) -> None:
-        """Cancel the in-flight preview task, if any, and wait for its cleanup."""
-        task = self._preview_task
-        if task is not None and task is not asyncio.current_task() and not task.done():
-            task.cancel()
-            try:
-                await task
-            except BaseException:
-                pass
 
     def _read_env_lines(self, env_path: Path) -> list[str]:
         """Load env file contents or a template as a list of lines."""
@@ -948,12 +914,7 @@ class LocalStream:
                 logger.exception("Failed to mount personality routes; the personality UI will be unavailable")
             try:
                 if self._settings_app is not None:
-                    mount_rmscript_routes(
-                        self._settings_app,
-                        get_loop=lambda: self._asyncio_loop,
-                        preview_rmscript=self.preview_rmscript,
-                        abort_preview=self.abort_preview,
-                    )
+                    mount_rmscript_routes(self._settings_app, self.handler)
             except Exception:
                 logger.exception("Failed to mount rmscript routes; the behaviors UI will be unavailable")
             self._tasks = [

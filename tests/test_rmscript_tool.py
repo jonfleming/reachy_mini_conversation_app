@@ -89,30 +89,25 @@ def test_single_antenna_keeps_other_in_place() -> None:
     assert move.target_antennas[1] == pytest.approx(np.pi)
 
 
-def test_preview_clears_queue_and_brackets_head_tracking() -> None:
-    """Preview clears the queue, pauses tracking, runs the script, then restores tracking."""
+def test_queue_rmscript_clears_queue_and_enqueues_moves() -> None:
+    """Preview clears the queue, enqueues the moves up front, and reports the duration."""
     queued: List[Any] = []
     deps = _make_deps(queued)
-    deps.camera_worker = MagicMock()
-    deps.camera_worker.is_head_tracking_enabled = True
-    tracking_calls: List[bool] = []
-    deps.camera_worker.set_head_tracking_enabled.side_effect = tracking_calls.append
 
-    result = asyncio.run(rmscript_tool.run_rmscript_preview('"t"\nlook left', deps))
+    result = rmscript_tool.queue_rmscript('"t"\nlook left\nwait 0.5s', deps)
 
     assert result["ok"] is True
-    deps.movement_manager.clear_move_queue.assert_called()
-    assert tracking_calls[0] is False  # paused before playing
-    assert tracking_calls[-1] is True  # restored to its prior state afterwards
-    assert len(queued) == 1  # the look move was queued
+    assert result["duration"] >= 0.5  # at least the explicit wait
+    deps.movement_manager.clear_move_queue.assert_called_once()
+    assert len(queued) == 2  # the look move + the wait hold
 
 
-def test_preview_compile_failure_does_not_touch_robot() -> None:
+def test_queue_rmscript_compile_failure_does_not_touch_robot() -> None:
     """An invalid script returns compile_failed without clearing the queue or moving."""
     queued: List[Any] = []
     deps = _make_deps(queued)
 
-    result = asyncio.run(rmscript_tool.run_rmscript_preview("floop the gleeb", deps))
+    result = rmscript_tool.queue_rmscript("floop the gleeb", deps)
 
     assert result == {"ok": False, "error": "compile_failed"}
     deps.movement_manager.clear_move_queue.assert_not_called()
