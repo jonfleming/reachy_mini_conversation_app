@@ -493,6 +493,42 @@ button {
   height: 15px;
 }
 
+/* Delete sits just left of the edit button, same overlay treatment. */
+.personality-card__delete {
+  position: absolute;
+  top: 8px;
+  right: 44px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--border);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.personality-card-slot:hover .personality-card__delete,
+.personality-card__delete:focus-visible {
+  opacity: 1;
+}
+
+.personality-card__delete:hover {
+  background: color-mix(in srgb, #e5484d 16%, var(--bg-elev));
+  color: #e5484d;
+}
+
+.personality-card__delete svg {
+  width: 15px;
+  height: 15px;
+}
+
 .personality-card {
   position: relative;
   display: flex;

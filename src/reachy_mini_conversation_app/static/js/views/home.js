@@ -2,6 +2,7 @@
 
 import {
   applyPersonality,
+  deletePersonality,
   describeError,
   listPersonalities,
   loadPersonality,
@@ -55,30 +56,36 @@ export async function mountHomeView({ outlet, signal, navigate }) {
   }
   if (signal.aborted) return;
 
-  const choices = (personalities?.choices || []).filter((name) => name !== BUILT_IN_DEFAULT_OPTION);
-  const current = personalities?.current;
-  const lockedTo = personalities?.locked ? personalities.locked_to : null;
+  // Render (and re-render, e.g. after a delete) the grid from a personalities payload.
+  function renderChoices(data) {
+    const choices = (data?.choices || []).filter((name) => name !== BUILT_IN_DEFAULT_OPTION);
+    const current = data?.current;
+    const lockedTo = data?.locked ? data.locked_to : null;
 
-  grid.replaceChildren();
-  for (const name of choices) {
-    const disabled = Boolean(lockedTo) && name !== lockedTo;
-    const editable = name.startsWith("user_personalities/") && !disabled;
-    grid.appendChild(
-      buildPersonalityCard({
-        name,
-        isActive: name === current,
-        disabled,
-        onSelect: () => handleSelection(name),
-        onEdit: editable ? () => handleEditClick(name) : null,
-      })
-    );
-  }
-  grid.appendChild(buildCustomCard({ onClick: handleCustomClick }));
+    grid.replaceChildren();
+    for (const name of choices) {
+      const disabled = Boolean(lockedTo) && name !== lockedTo;
+      const editable = name.startsWith("user_personalities/") && !disabled;
+      grid.appendChild(
+        buildPersonalityCard({
+          name,
+          isActive: name === current,
+          disabled,
+          onSelect: () => handleSelection(name),
+          onEdit: editable ? () => handleEditClick(name) : null,
+          onDelete: editable ? () => handleDeleteClick(name) : null,
+        })
+      );
+    }
+    grid.appendChild(buildCustomCard({ onClick: handleCustomClick }));
 
-  if (lockedTo) {
-    status.textContent = `Profile locked to "${lockedTo}" by REACHY_MINI_LOCKED_PROFILE; switching is disabled.`;
-    status.classList.add("is-warning");
+    if (lockedTo) {
+      status.textContent = `Profile locked to "${lockedTo}" by REACHY_MINI_LOCKED_PROFILE; switching is disabled.`;
+      status.classList.add("is-warning");
+    }
   }
+
+  renderChoices(personalities);
 
   function handleSelection(name) {
     // Optimistic header update so the badge already reads the chosen
@@ -184,9 +191,31 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       status.textContent = `Saved "${prettifyProfileName(name)}". It will apply next time you select it.`;
     }
   }
+
+  async function handleDeleteClick(name) {
+    if (!window.confirm(`Delete personality "${prettifyProfileName(name)}"? This cannot be undone.`)) return;
+    status.classList.remove("is-warning", "is-error");
+    try {
+      await deletePersonality(name);
+    } catch (error) {
+      if (signal.aborted) return;
+      status.textContent = `Failed to delete: ${describeError(error)}`;
+      status.classList.add("is-error");
+      return;
+    }
+    let data;
+    try {
+      data = await listPersonalities();
+    } catch {
+      return;
+    }
+    if (signal.aborted) return;
+    renderChoices(data);
+    status.textContent = `Deleted "${prettifyProfileName(name)}".`;
+  }
 }
 
-function buildPersonalityCard({ name, isActive, disabled, onSelect, onEdit }) {
+function buildPersonalityCard({ name, isActive, disabled, onSelect, onEdit, onDelete }) {
   const hasAvatar = Object.prototype.hasOwnProperty.call(AVATAR_BY_PROFILE, stripUserPrefix(name));
   const card = h(
     "button",
@@ -213,13 +242,32 @@ function buildPersonalityCard({ name, isActive, disabled, onSelect, onEdit }) {
     h("span", { class: "personality-card__name" }, prettifyProfileName(name)),
     isActive && checkBadge()
   );
-  // Wrap so the edit button is a sibling, not a nested <button> inside the card button.
+  // Wrap so the edit/delete buttons are siblings, not nested <button>s inside the card button.
   return h(
     "div",
     { class: "personality-card-slot", role: "listitem" },
     card,
+    onDelete ? buildDeleteButton({ name, onDelete }) : null,
     onEdit ? buildEditButton({ name, onEdit }) : null
   );
+}
+
+/** Small overlay button to delete a user personality, anchored left of the edit button. */
+function buildDeleteButton({ name, onDelete }) {
+  return h("button", {
+    type: "button",
+    class: "personality-card__delete",
+    "aria-label": `Delete personality ${prettifyProfileName(name)}`,
+    onClick: onDelete,
+    html: `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 6h18"/>
+        <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/>
+        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        <path d="M10 11v6"/>
+        <path d="M14 11v6"/>
+      </svg>`,
+  });
 }
 
 /** Small overlay button to edit a user personality, anchored to the card corner. */
