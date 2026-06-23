@@ -196,33 +196,21 @@ def make_rmscript_tool_class(source: str, tool_name: str) -> type[RmscriptTool] 
     )
 
 
-def queue_rmscript(source: str, deps: ToolDependencies) -> Dict[str, Any]:
-    """Compile an rmscript and queue its moves for fire-and-forget preview.
+def prepare_preview(source: str) -> Tuple[RmscriptTool | None, float]:
+    """Compile a script for preview, returning a tool instance and its run time.
 
-    Clears the movement queue, then enqueues every move up front; the movement
-    worker plays them back-to-back honoring each duration, so no host-side pacing
-    is needed. Pictures and sounds are skipped (there is no timeline to align
-    them to). Returns ``{"ok": True, "duration": <seconds>}`` or, on a compile
-    failure, ``{"ok": False, "error": "compile_failed"}`` without touching the robot.
+    The tool runs through the same paced ``__call__`` path the real tool uses,
+    so preview honors waits, sounds, and pictures. The returned duration is how
+    long that run blocks (movements, waits, and blocking sounds). On a compile
+    failure returns ``(None, 0.0)``.
     """
     cls = make_rmscript_tool_class(source, "preview")
     if cls is None:
-        return {"ok": False, "error": "compile_failed"}
-
-    mini = deps.reachy_mini
-    head: npt.NDArray[Any] = mini.get_current_head_pose()
-    head_joints, antenna_joints = mini.get_current_joint_positions()
-    antennas: Antennas = (antenna_joints[0], antenna_joints[1])  # [right, left]
-    body_yaw: float = head_joints[0]
-
-    tool = cls()
-    deps.movement_manager.clear_move_queue()
-    total = 0.0
-    for action in cls._ir:
-        if isinstance(action, IRAction):
-            head, antennas, body_yaw = tool._queue_action(deps, action, head, antennas, body_yaw)
-            total += action.duration
-        elif isinstance(action, IRWaitAction):
-            tool._queue_move(deps, head, antennas, body_yaw, action.duration)
-            total += action.duration
-    return {"ok": True, "duration": total}
+        return None, 0.0
+    duration = sum(
+        action.duration
+        for action in cls._ir
+        if isinstance(action, (IRAction, IRWaitAction))
+        or (isinstance(action, IRPlaySoundAction) and action.blocking and action.duration)
+    )
+    return cls(), duration

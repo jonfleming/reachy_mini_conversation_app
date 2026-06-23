@@ -3,11 +3,13 @@
 Exposes compile-checking and CRUD endpoints for .rmscript-defined tools, plus
 preview/abort endpoints that play a script on the robot. Save rejects sources
 that fail to compile, so the library never holds a tool that would hard-fail
-the registry. Preview queues the script's moves on the (thread-safe) movement
-manager and returns immediately; abort clears the queue and restores tracking.
+the registry. Preview runs the script through the same paced path as the real
+tool (a background task, so waits/sounds/pictures are honored) with head
+tracking off; abort cancels that task, clears the queue, and restores tracking.
 """
 
 from __future__ import annotations
+import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -21,7 +23,7 @@ from .rmscript_library import (
     write_rmscript_tool,
     delete_rmscript_tool,
 )
-from .tools.rmscript_tool import queue_rmscript
+from .tools.rmscript_tool import RmscriptTool, prepare_preview
 from .conversation_handler import ConversationHandler
 
 
@@ -36,33 +38,61 @@ def _dump(items: Any) -> List[Dict[str, Any]]:
 def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
     """Register shared rmscript tool library endpoints on a FastAPI app.
 
-    Preview/abort use the handler's robot dependencies directly; the movement
-    queue and head-tracking toggle are thread-safe, so no event loop is needed.
+    Preview runs the tool in a background task; ``preview`` tracks that task and
+    the head-tracking state to restore. The movement queue and head-tracking
+    toggle are thread-safe, so the task drives the robot directly.
     """
-    # Head-tracking state saved when a preview starts, restored on abort.
-    saved_tracking: Dict[str, bool | None] = {"value": None}
+    # In-flight preview task and the head-tracking value to restore afterwards.
+    preview: Dict[str, Any] = {"task": None, "tracking": None}
+
+    def _disable_tracking() -> None:
+        """Turn head tracking off, remembering its prior value (once per preview)."""
+        cam = handler.deps.camera_worker
+        if cam is not None and preview["tracking"] is None:
+            preview["tracking"] = cam.is_head_tracking_enabled
+            cam.set_head_tracking_enabled(False)
+
+    def _restore_tracking() -> None:
+        """Restore head tracking to its pre-preview value, if we changed it."""
+        cam = handler.deps.camera_worker
+        if cam is not None and preview["tracking"] is not None:
+            cam.set_head_tracking_enabled(preview["tracking"])
+        preview["tracking"] = None
+
+    def _cancel_task() -> None:
+        """Cancel the running preview task, if any, and forget it."""
+        task = preview["task"]
+        if task is not None and not task.done():
+            task.cancel()
+        preview["task"] = None
+
+    async def _run_preview(tool: RmscriptTool) -> None:
+        """Play the behavior, restoring tracking only if not superseded/aborted."""
+        try:
+            await tool(handler.deps)
+        finally:
+            # A superseding preview or an explicit abort manages state instead.
+            if preview["task"] is asyncio.current_task():
+                preview["task"] = None
+                _restore_tracking()
 
     @app.post("/rmscript/preview")
     async def _preview(request: Request) -> Any:
-        deps = handler.deps
         source = str((await request.json()).get("source", ""))
-        result = queue_rmscript(source, deps)
-        if not result["ok"]:
-            return JSONResponse(result, status_code=400)
-        cam = deps.camera_worker
-        if cam is not None and saved_tracking["value"] is None:
-            saved_tracking["value"] = cam.is_head_tracking_enabled
-            cam.set_head_tracking_enabled(False)
-        return result
+        tool, duration = prepare_preview(source)
+        if tool is None:
+            return JSONResponse({"ok": False, "error": "compile_failed"}, status_code=400)
+        _cancel_task()
+        handler.deps.movement_manager.clear_move_queue()
+        _disable_tracking()
+        preview["task"] = asyncio.create_task(_run_preview(tool))
+        return {"ok": True, "duration": duration}
 
     @app.post("/rmscript/abort")
     async def _abort() -> dict:  # type: ignore
-        deps = handler.deps
-        deps.movement_manager.clear_move_queue()
-        cam = deps.camera_worker
-        if cam is not None and saved_tracking["value"] is not None:
-            cam.set_head_tracking_enabled(saved_tracking["value"])
-            saved_tracking["value"] = None
+        _cancel_task()
+        handler.deps.movement_manager.clear_move_queue()
+        _restore_tracking()
         return {"ok": True}
 
     @app.post("/rmscript/verify")

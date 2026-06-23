@@ -89,29 +89,20 @@ def test_single_antenna_keeps_other_in_place() -> None:
     assert move.target_antennas[1] == pytest.approx(np.pi)
 
 
-def test_queue_rmscript_clears_queue_and_enqueues_moves() -> None:
-    """Preview clears the queue, enqueues the moves up front, and reports the duration."""
-    queued: List[Any] = []
-    deps = _make_deps(queued)
+def test_prepare_preview_returns_tool_and_duration() -> None:
+    """A valid script yields a runnable tool and the time its run will block."""
+    tool, duration = rmscript_tool.prepare_preview('"t"\nlook left\nwait 0.5s')
 
-    result = rmscript_tool.queue_rmscript('"t"\nlook left\nwait 0.5s', deps)
-
-    assert result["ok"] is True
-    assert result["duration"] >= 0.5  # at least the explicit wait
-    deps.movement_manager.clear_move_queue.assert_called_once()
-    assert len(queued) == 2  # the look move + the wait hold
+    assert tool is not None
+    assert duration == pytest.approx(1.5)  # look (default 1s) + wait 0.5s
 
 
-def test_queue_rmscript_compile_failure_does_not_touch_robot() -> None:
-    """An invalid script returns compile_failed without clearing the queue or moving."""
-    queued: List[Any] = []
-    deps = _make_deps(queued)
+def test_prepare_preview_compile_failure_returns_none() -> None:
+    """An invalid script yields no tool and zero duration."""
+    tool, duration = rmscript_tool.prepare_preview("floop the gleeb")
 
-    result = rmscript_tool.queue_rmscript("floop the gleeb", deps)
-
-    assert result == {"ok": False, "error": "compile_failed"}
-    deps.movement_manager.clear_move_queue.assert_not_called()
-    assert queued == []
+    assert tool is None
+    assert duration == 0.0
 
 
 def test_resolve_sound_prefers_library_sounds_dir(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
