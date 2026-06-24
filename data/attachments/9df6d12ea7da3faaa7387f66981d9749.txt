@@ -1,0 +1,15 @@
+INFO     reachy_mini_conversation_app.vision.local_vision:local_vision.py:233 HF_HOME set to /tmp/hf_cache
+INFO     reachy_mini_conversation_app.vision.local_vision:local_vision.py:235 Downloading vision model test/model to cache...
+ERROR    reachy_mini_conversation_app.vision.local_vision:local_vision.py:249 Failed to initialize vision processor
+Traceback (most recent call last):
+  File "/home/runner/work/reachy_mini_conversation_app/reachy_mini_conversation_app/src/reachy_mini_conversation_app/vision/local_vision.py", line 236, in initialize_vision_processor
+    snapshot_download(repo_id=model_id, repo_type="model", cache_dir=cache_dir)
+  File "/usr/lib/python3.12/unittest/mock.py", line 1134, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1138, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1193, in _execute_mock_call
+    raise effect
+Exception: Network error

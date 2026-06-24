@@ -1,0 +1,3 @@
+2026-06-24 13:16:51,819 INFO reachy_mini_conversation_app.vision.local_vision:109 | Loading SmolVLM2 model on cpu (HF_HOME=/home/runner/work/_temp/.hf)
+2026-06-24 13:16:51,824 ERROR reachy_mini_conversation_app.vision.local_vision:200 | CUDA OOM on attempt 1: OOM
+2026-06-24 13:16:51,835 ERROR reachy_mini_conversation_app.vision.local_vision:200 | CUDA OOM on attempt 2: OOM

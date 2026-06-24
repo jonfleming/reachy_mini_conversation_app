@@ -1,0 +1,1 @@
+{"id":"ee96658650f58534c4a9206eb4f78176","fullName":"tests.vision.test_local_vision#test_vision_processor_device_selection_auto_prefers_cuda_over_cpu","name":"test_vision_processor_device_selection_auto_prefers_cuda_over_cpu","status":"passed","testResultsByEnv":{"default":"37917967f2f12356c79acc79b942e39e"}}

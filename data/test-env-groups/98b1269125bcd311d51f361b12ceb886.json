@@ -1,0 +1,1 @@
+{"id":"98b1269125bcd311d51f361b12ceb886","fullName":"tests.test_utils#test_initialize_camera_and_vision_raises_when_local_vision_import_crashes","name":"test_initialize_camera_and_vision_raises_when_local_vision_import_crashes","status":"passed","testResultsByEnv":{"default":"512c2cd37e6f780f4fa27aaa8ff0a5da"}}

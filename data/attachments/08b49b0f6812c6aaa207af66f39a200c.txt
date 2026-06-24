@@ -1,0 +1,2 @@
+INFO     reachy_mini_conversation_app.utils:utils.py:106 Using mediapipe head tracker in process
+INFO     reachy_mini_conversation_app.utils:utils.py:140 Using the selected realtime backend for vision (default). Use --local-vision for local processing.

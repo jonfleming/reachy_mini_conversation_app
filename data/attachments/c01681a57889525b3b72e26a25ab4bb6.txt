@@ -1,0 +1,1 @@
+2026-06-24 13:16:49,567 ERROR reachy_mini_conversation_app.utils:67 | tool-spaces command failed: Space 'pollen-robotics/private-space' is not public and cannot be installed in this v1 flow.

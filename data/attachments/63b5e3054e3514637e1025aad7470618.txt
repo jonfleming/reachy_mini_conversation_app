@@ -1,0 +1,3 @@
+2026-06-24 13:16:51,601 INFO reachy_mini_conversation_app.vision.local_vision:109 | Loading SmolVLM2 model on cpu (HF_HOME=/home/runner/work/_temp/.hf)
+2026-06-24 13:16:51,606 ERROR reachy_mini_conversation_app.vision.local_vision:208 | Vision processing failed (attempt 1): Temporary failure
+2026-06-24 13:16:51,617 ERROR reachy_mini_conversation_app.vision.local_vision:208 | Vision processing failed (attempt 2): Temporary failure

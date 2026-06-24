@@ -1,0 +1,1 @@
+2026-06-24 13:16:51,589 INFO reachy_mini_conversation_app.vision.local_vision:109 | Loading SmolVLM2 model on cpu (HF_HOME=/home/runner/work/_temp/.hf)

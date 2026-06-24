@@ -1,0 +1,1 @@
+{"id":"2513c62f426c45214bfa6eb259dd35d4","fullName":"tests.vision.test_yolo_process#test_head_tracker_skips_new_frame_until_timed_out_reply_is_drained","name":"test_head_tracker_skips_new_frame_until_timed_out_reply_is_drained","status":"passed","testResultsByEnv":{"default":"41a60d8a37c2c90ed44d2550899a52dd"}}

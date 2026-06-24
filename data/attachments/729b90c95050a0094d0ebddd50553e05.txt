@@ -1,0 +1,2 @@
+2026-06-24 13:16:49,635 INFO reachy_mini_conversation_app.utils:106 | Using mediapipe head tracker in process
+2026-06-24 13:16:49,635 INFO reachy_mini_conversation_app.utils:140 | Using the selected realtime backend for vision (default). Use --local-vision for local processing.
