@@ -1,3 +1,0 @@
-INFO     reachy_mini_conversation_app.vision.local_vision:local_vision.py:109 Loading SmolVLM2 model on cpu (HF_HOME=/home/runner/work/_temp/.hf)
-ERROR    reachy_mini_conversation_app.vision.local_vision:local_vision.py:200 CUDA OOM on attempt 1: OOM
-ERROR    reachy_mini_conversation_app.vision.local_vision:local_vision.py:200 CUDA OOM on attempt 2: OOM

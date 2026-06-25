@@ -1,1 +1,0 @@
-2026-06-24 13:16:51,361 INFO reachy_mini_conversation_app.tools.camera:36 | Tool call: camera question=What color is this?

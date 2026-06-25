@@ -1,1 +1,1 @@
-{"id":"a158e661360b54467ed8e3694b1f6077","fullName":"tests.test_openai_realtime#test_idle_signal_starts_local_tool_without_model_turn","name":"test_idle_signal_starts_local_tool_without_model_turn","status":"passed","testResultsByEnv":{"default":"b19f6cbc02e3b42cc545427d3c99703b"}}
+{"id":"a158e661360b54467ed8e3694b1f6077","fullName":"tests.test_openai_realtime#test_idle_signal_starts_local_tool_without_model_turn","name":"test_idle_signal_starts_local_tool_without_model_turn","status":"passed","testResultsByEnv":{"default":"dbda5837bd01a70984b5fcf068701bef"}}

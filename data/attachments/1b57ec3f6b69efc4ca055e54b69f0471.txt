@@ -1,1 +1,0 @@
-INFO     reachy_mini_conversation_app.vision.local_vision:local_vision.py:109 Loading SmolVLM2 model on cuda (HF_HOME=/home/runner/work/_temp/.hf)

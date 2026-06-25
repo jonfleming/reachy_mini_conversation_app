@@ -1,1 +1,0 @@
-WARNING  reachy_mini_conversation_app.vision.head_tracking.yolo_process:yolo_process.py:323 Head tracker yolo communication timed out: yolo head tracker timed out after 0.01s

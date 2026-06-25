@@ -1,1 +1,0 @@
-2026-06-24 13:16:51,949 WARNING reachy_mini_conversation_app.vision.head_tracking.yolo_process:323 | Head tracker yolo communication timed out: yolo head tracker timed out after 0.01s
