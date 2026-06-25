@@ -2,55 +2,13 @@
   "stats": {
     "total": 248,
     "passed": 248,
-    "new": 8
+    "new": 1
   },
   "status": "passed",
   "newTests": [
     {
-      "id": "bf93a569cd5398124be37f9c122c1824",
-      "name": "test_additional_outputs_stores_messages",
-      "status": "passed",
-      "duration": 0
-    },
-    {
-      "id": "b8c1211bc772ddc190e6e88c6a3e3211",
-      "name": "test_audio_to_int16_scales_float32",
-      "status": "passed",
-      "duration": 1
-    },
-    {
-      "id": "3fbe2dde084f6f3d3c03b6ac1ff966e7",
-      "name": "test_wait_for_item_returns_none_on_timeout",
-      "status": "passed",
-      "duration": 11
-    },
-    {
-      "id": "f696261efafe5e7cedee4602081256a7",
-      "name": "test_audio_to_float32_scales_int16",
-      "status": "passed",
-      "duration": 0
-    },
-    {
-      "id": "1e002fafcb0713ff09e7c8b505a94bdb",
-      "name": "test_camera_tool_reports_error_when_camera_disabled",
-      "status": "passed",
-      "duration": 1
-    },
-    {
-      "id": "144fd79cab2a17daf263b48a67216702",
-      "name": "test_audio_converters_reject_unsupported_dtype",
-      "status": "passed",
-      "duration": 1
-    },
-    {
-      "id": "3e08e2ba0cc83b0bd369d74af9782cac",
-      "name": "test_default_session_instructions_load_from_default_profile",
-      "status": "passed",
-      "duration": 1
-    },
-    {
-      "id": "9307a0dceb78132667102e9e43185e0c",
-      "name": "test_default_prompt_include_keeps_compatibility",
+      "id": "e801a0b70b7bed8bd58ab071183fb782",
+      "name": "test_bracketed_prompt_line_stays_plain_text",
       "status": "passed",
       "duration": 0
     }
@@ -59,17 +17,17 @@
   "retryTests": [],
   "checks": [],
   "name": "Conversation App Tests",
-  "duration": 9491,
-  "createdAt": 1782388158765,
+  "duration": 11477,
+  "createdAt": 1782389668268,
   "plugin": "Awesome",
   "meta": {
-    "reportId": "a4307330-8927-420d-9caa-592fc7b881ef",
+    "reportId": "fdcfe768-a21a-4474-a2e0-220e6ebd259a",
     "singleFile": false,
     "withTestResultsLinks": true
   },
   "pluginId": "awesome",
   "pullRequestHref": "",
-  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28167912484",
+  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28169266244",
   "href": "awesome/",
   "coverage": 66
 }
