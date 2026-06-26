@@ -1,0 +1,7 @@
+"Looks around to test the yaw movement"
+
+body left 110
+wait 1s
+body right 110
+wait 1s
+body center
