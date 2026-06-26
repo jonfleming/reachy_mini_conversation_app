@@ -1,20 +1,21 @@
+import time
 import random
 import asyncio
 import logging
 from types import SimpleNamespace
 from typing import Any, Callable
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastrtc import AdditionalOutputs
 
 import reachy_mini_conversation_app.idle_policy as idle_policy_mod
 import reachy_mini_conversation_app.base_realtime as base_rt_mod
 import reachy_mini_conversation_app.openai_realtime as rt_mod
 import reachy_mini_conversation_app.tools.core_tools as ct_mod
+import reachy_mini_conversation_app.conversation_handler as conv_mod
 import reachy_mini_conversation_app.tools.background_tool_manager as btm_mod
 from reachy_mini_conversation_app.config import OPENAI_BACKEND, config, get_default_voice_for_backend
+from reachy_mini_conversation_app.streaming import AdditionalOutputs
 from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 from reachy_mini_conversation_app.tools.tool_constants import ToolState
@@ -24,24 +25,17 @@ from reachy_mini_conversation_app.tools.background_tool_manager import ToolCallR
 OPENAI_DEFAULT_VOICE = get_default_voice_for_backend(OPENAI_BACKEND)
 
 
-def _build_handler(loop: asyncio.AbstractEventLoop) -> OpenaiRealtimeHandler:
-    asyncio.set_event_loop(loop)
-    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
-    return OpenaiRealtimeHandler(deps)
-
-
 async def _run_openai_handler_with_events(
     monkeypatch: Any,
     events: list[Any],
     *,
     movement_manager: MagicMock | None = None,
-    gradio_mode: bool = False,
     handler_setup: Callable[[OpenaiRealtimeHandler], None] | None = None,
 ) -> OpenaiRealtimeHandler:
     """Run an OpenAI realtime handler against a fixed event sequence."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=OPENAI_DEFAULT_VOICE: "alloy")
-    monkeypatch.setattr(rt_mod, "get_active_tool_specs", lambda _: [])
+    monkeypatch.setattr(base_rt_mod, "get_tool_specs", lambda: [])
 
     class FakeSession:
         async def update(self, **_kw: Any) -> None:
@@ -104,7 +98,7 @@ async def _run_openai_handler_with_events(
         reachy_mini=MagicMock(),
         movement_manager=movement_manager or MagicMock(),
     )
-    handler = OpenaiRealtimeHandler(deps, gradio_mode=gradio_mode)
+    handler = OpenaiRealtimeHandler(deps)
     handler.client = FakeClient()
     if handler_setup is not None:
         handler_setup(handler)
@@ -123,7 +117,7 @@ async def test_non_idle_tool_call_does_not_queue_progress_response(monkeypatch: 
     """Tool-call startup should not enqueue a second speech response."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=OPENAI_DEFAULT_VOICE: "alloy")
-    monkeypatch.setattr(rt_mod, "get_active_tool_specs", lambda _: [])
+    monkeypatch.setattr(base_rt_mod, "get_tool_specs", lambda: [])
 
     class FakeEvent:
         def __init__(self, etype: str, **kwargs: Any) -> None:
@@ -199,6 +193,7 @@ async def test_non_idle_tool_call_does_not_queue_progress_response(monkeypatch: 
 
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
     handler = OpenaiRealtimeHandler(deps)
+    handler._startup_greeting_sent = True
     fake_client = FakeClient()
     handler.client = fake_client
     safe_response_create = AsyncMock()
@@ -217,26 +212,87 @@ async def test_non_idle_tool_call_does_not_queue_progress_response(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_completed_user_transcript_resets_idle_state(monkeypatch: Any) -> None:
-    """A completed user turn should refresh activity and cancel stale idle intent."""
+async def test_run_realtime_session_queues_startup_greeting(monkeypatch: Any) -> None:
+    """OpenAI-compatible sessions should inject a profile-driven first turn after connect."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=OPENAI_DEFAULT_VOICE: "alloy")
+    monkeypatch.setattr(base_rt_mod, "get_tool_specs", lambda: [])
+    monkeypatch.setattr(base_rt_mod, "get_session_greeting_prompt", lambda: "Greet the user as a comet captain.")
 
-    def setup_idle_state(handler: OpenaiRealtimeHandler) -> None:
-        handler.is_idle_tool_call = True
-        handler.last_activity_time = 1.0
+    created_items: list[dict[str, Any]] = []
 
-    handler = await _run_openai_handler_with_events(
-        monkeypatch,
-        [
-            SimpleNamespace(
-                type="conversation.item.input_audio_transcription.completed",
-                transcript="Can you check the weather?",
-            )
-        ],
-        handler_setup=setup_idle_state,
-    )
+    class FakeSession:
+        async def update(self, **_kw: Any) -> None:
+            pass
 
-    assert handler.is_idle_tool_call is False
-    assert handler.last_activity_time > 1.0
+    class FakeInputAudioBuffer:
+        async def append(self, **_kw: Any) -> None:
+            pass
+
+    class FakeItem:
+        async def create(self, **kwargs: Any) -> None:
+            created_items.append(kwargs["item"])
+
+    class FakeConversation:
+        item = FakeItem()
+
+    class FakeResponse:
+        async def create(self, **_kw: Any) -> None:
+            pass
+
+        async def cancel(self, **_kw: Any) -> None:
+            pass
+
+    class FakeConn:
+        session = FakeSession()
+        input_audio_buffer = FakeInputAudioBuffer()
+        conversation = FakeConversation()
+        response = FakeResponse()
+
+        async def __aenter__(self) -> "FakeConn":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def close(self) -> None:
+            pass
+
+        def __aiter__(self) -> "FakeConn":
+            return self
+
+        async def __anext__(self) -> Any:
+            raise StopAsyncIteration
+
+    class FakeRealtime:
+        def connect(self, **_kw: Any) -> FakeConn:
+            return FakeConn()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.realtime = FakeRealtime()
+
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    handler = OpenaiRealtimeHandler(deps)
+    handler.client = FakeClient()
+    monkeypatch.setattr(type(handler.tool_manager), "start_up", MagicMock())
+    monkeypatch.setattr(type(handler.tool_manager), "shutdown", AsyncMock())
+
+    await handler._run_realtime_session()
+
+    assert handler._startup_greeting_sent is True
+    assert created_items == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Greet the user as a comet captain.",
+                }
+            ],
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -286,6 +342,29 @@ async def test_idle_signal_starts_local_tool_without_model_turn(monkeypatch: Any
 
 
 @pytest.mark.asyncio
+async def test_idle_emit_updates_idle_clock_without_refreshing_activity(monkeypatch: Any) -> None:
+    """Idle behavior should not postpone app inactivity timeout."""
+    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
+    deps.movement_manager.is_idle.return_value = True
+    handler = OpenaiRealtimeHandler(deps)
+    now = time.monotonic()
+    previous_activity_time = now - 181.0
+    previous_idle_behavior_time = now - 181.0
+    handler.last_activity_time = previous_activity_time
+    handler.last_idle_behavior_time = previous_idle_behavior_time
+    handler._response_done_event.set()
+    send_idle_signal = AsyncMock()
+    monkeypatch.setattr(handler, "send_idle_signal", send_idle_signal)
+    monkeypatch.setattr(conv_mod, "wait_for_item", AsyncMock(return_value=None))
+
+    await handler.emit()
+
+    send_idle_signal.assert_awaited_once()
+    assert handler.last_activity_time == previous_activity_time
+    assert handler.last_idle_behavior_time > previous_idle_behavior_time
+
+
+@pytest.mark.asyncio
 async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) -> None:
     """Locally selected idle tool completions should stay out of the model conversation."""
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
@@ -293,6 +372,7 @@ async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) 
 
     fake_item = SimpleNamespace(create=AsyncMock())
     handler.connection = SimpleNamespace(conversation=SimpleNamespace(item=fake_item))
+    handler.last_activity_time = 1.0
     safe_response_create = AsyncMock()
     monkeypatch.setattr(handler, "_safe_response_create", safe_response_create)
 
@@ -308,6 +388,7 @@ async def test_idle_tool_result_is_not_sent_to_realtime_model(monkeypatch: Any) 
 
     fake_item.create.assert_not_awaited()
     safe_response_create.assert_not_awaited()
+    assert handler.last_activity_time == 1.0
 
 
 @pytest.mark.asyncio
@@ -475,13 +556,31 @@ async def test_apply_personality_preserves_manual_voice_override(monkeypatch: An
     restart = AsyncMock()
     monkeypatch.setattr(handler, "_restart_session", restart)
 
-    status = await handler.apply_personality("example")
+    status = await handler.apply_personality("mars_rover")
 
     assert status == "Applied personality and restarted realtime session."
     assert handler.get_current_voice() == "marin"
     restart.assert_awaited_once()
     session = update.await_args.kwargs["session"]
     assert session["audio"]["output"]["voice"] == "marin"
+
+
+@pytest.mark.asyncio
+async def test_apply_personality_forces_tool_registry_reload(monkeypatch: Any) -> None:
+    """Applying a profile must rebuild the tool roster even when the profile name is unchanged."""
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=None: "cedar")
+    monkeypatch.setattr("reachy_mini_conversation_app.config.set_custom_profile", lambda _profile: None)
+    reload = MagicMock()
+    monkeypatch.setattr(ct_mod, "initialize_tools", reload)
+
+    handler = OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler.connection = SimpleNamespace(session=SimpleNamespace(update=AsyncMock()))
+    monkeypatch.setattr(handler, "_restart_session", AsyncMock())
+
+    await handler.apply_personality("example")
+
+    reload.assert_called_once_with(force=True)
 
 
 def test_handler_uses_startup_voice_at_startup(monkeypatch: Any) -> None:
@@ -519,27 +618,6 @@ def test_copy_preserves_current_voice_override(monkeypatch: Any) -> None:
     copied_handler = handler.copy()
 
     assert copied_handler.get_current_voice() == "marin"
-
-
-def test_format_timestamp_uses_wall_clock() -> None:
-    """Test that format_timestamp uses wall clock time."""
-    try:
-        previous_loop = asyncio.get_event_loop()
-    except RuntimeError:
-        previous_loop = asyncio.new_event_loop()
-    loop = asyncio.new_event_loop()
-    try:
-        print("Testing format_timestamp...")
-        handler = _build_handler(loop)
-        formatted = handler.format_timestamp()
-        print(f"Formatted timestamp: {formatted}")
-    finally:
-        loop.close()
-        asyncio.set_event_loop(previous_loop)
-
-    # Extract year from "[YYYY-MM-DD ...]"
-    year = int(formatted[1:5])
-    assert year == datetime.now(timezone.utc).year
 
 
 @pytest.mark.asyncio
@@ -650,37 +728,11 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
 
 
 @pytest.mark.asyncio
-async def test_start_up_openai_gradio_collects_textbox_api_key(monkeypatch: Any) -> None:
-    """OpenAI should own Gradio textbox credential collection."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
-
-    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
-    handler = rt_mod.OpenaiRealtimeHandler(deps, gradio_mode=True)
-    handler.latest_args = ["profile", "voice", "unused", "sk-textbox-secret"]
-
-    build_client = AsyncMock(return_value=MagicMock())
-    run_realtime_session = AsyncMock(return_value=None)
-    wait_for_args = AsyncMock(return_value=None)
-
-    monkeypatch.setattr(handler, "_build_realtime_client", build_client)
-    monkeypatch.setattr(handler, "_run_realtime_session", run_realtime_session)
-    monkeypatch.setattr(handler, "wait_for_args", wait_for_args)
-
-    await handler.start_up()
-
-    wait_for_args.assert_awaited_once()
-    build_client.assert_awaited_once_with()
-    run_realtime_session.assert_awaited_once()
-    assert handler._provided_api_key == "sk-textbox-secret"
-
-
-@pytest.mark.asyncio
 async def test_run_realtime_session_propagates_session_update_failure(monkeypatch: Any) -> None:
     """A failed session.update must abort startup instead of looking like a clean session exit."""
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=OPENAI_DEFAULT_VOICE: "alloy")
-    monkeypatch.setattr(rt_mod, "get_active_tool_specs", lambda _: [])
+    monkeypatch.setattr(base_rt_mod, "get_tool_specs", lambda: [])
 
     class FakeSession:
         async def update(self, **_kw: Any) -> None:
@@ -704,6 +756,7 @@ async def test_run_realtime_session_propagates_session_update_failure(monkeypatc
             self.realtime = FakeRealtime()
 
     handler = rt_mod.OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler._startup_greeting_sent = True
     handler.client = FakeClient()
 
     with pytest.raises(RuntimeError, match="invalid session config"):
@@ -795,7 +848,7 @@ async def test_response_sender_retries_when_active_response_error_uses_type_only
     monkeypatch.setattr(base_rt_mod, "_RESPONSE_REJECTION_RETRY_DELAY", 0.01)
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=OPENAI_DEFAULT_VOICE: "alloy")
-    monkeypatch.setattr(rt_mod, "get_active_tool_specs", lambda _: [])
+    monkeypatch.setattr(base_rt_mod, "get_tool_specs", lambda: [])
 
     class FakeError:
         def __init__(self, message: str) -> None:
@@ -888,6 +941,7 @@ async def test_response_sender_retries_when_active_response_error_uses_type_only
             self.realtime = FakeRealtime()
 
     handler = rt_mod.OpenaiRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    handler._startup_greeting_sent = True
     handler.client = FakeClient()
 
     session_task = asyncio.create_task(handler._run_realtime_session())
@@ -940,7 +994,7 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
     monkeypatch.setattr(base_rt_mod, "ConnectionClosedError", FakeCCE)
     monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
     monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=OPENAI_DEFAULT_VOICE: "alloy")
-    monkeypatch.setattr(rt_mod, "get_active_tool_specs", lambda _: [])
+    monkeypatch.setattr(base_rt_mod, "get_tool_specs", lambda: [])
 
     # 400 near-simultaneous tool results coalesce into far fewer response.create sends.
     N_TOOL_RESULTS = 400
@@ -1111,6 +1165,7 @@ async def test_response_sender_retries_on_active_response_rejection(monkeypatch:
 
     deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock())
     handler = rt_mod.OpenaiRealtimeHandler(deps)
+    handler._startup_greeting_sent = True
     handler_ref.append(handler)
 
     asyncio.create_task(handler.start_up())
@@ -1274,106 +1329,3 @@ async def test_response_sender_loop_times_out_waiting_for_previous_response(
 
     timeout_logs = [r for r in caplog.records if "Timed out waiting for previous response" in r.getMessage()]
     assert len(timeout_logs) == 1, f"Expected 1 pre-condition timeout warning, got {len(timeout_logs)}"
-
-
-@pytest.mark.asyncio
-async def test_openai_excludes_head_tracking_when_no_head_tracker(monkeypatch: Any) -> None:
-    """head_tracking tool must not appear in OpenAI session config when head_tracker is not active."""
-    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda _instance_path=None: "test")
-    monkeypatch.setattr(rt_mod, "get_session_voice", lambda default=None: "alloy")
-
-    # Mock the spec source while preserving get_active_tool_specs filtering.
-    fake_tool_specs = [
-        {"type": "function", "name": "head_tracking", "description": "head_tracking", "parameters": {}},
-        {"type": "function", "name": "fake_tool", "description": "fake_tool", "parameters": {}},
-    ]
-
-    def fake_get_tool_specs(exclusion_list: list[str] | None = None) -> list[dict[str, object]]:
-        excluded = set(exclusion_list or [])
-        return [spec for spec in fake_tool_specs if spec["name"] not in excluded]
-
-    monkeypatch.setattr(ct_mod, "get_tool_specs", fake_get_tool_specs)
-
-    session_kwargs: dict = {}
-
-    class FakeSession:
-        async def update(self, **kwargs: Any) -> None:
-            session_kwargs["session"] = kwargs.get("session")
-
-    class FakeInputAudioBuffer:
-        async def append(self, **_kw: Any) -> None:
-            pass
-
-    class FakeItem:
-        async def create(self, **_kw: Any) -> None:
-            pass
-
-    class FakeConversation:
-        item = FakeItem()
-
-    class FakeResponse:
-        async def create(self, **_kw: Any) -> None:
-            pass
-
-        async def cancel(self, **_kw: Any) -> None:
-            pass
-
-    class FakeConn:
-        session = FakeSession()
-        input_audio_buffer = FakeInputAudioBuffer()
-        conversation = FakeConversation()
-        response = FakeResponse()
-
-        async def __aenter__(self) -> "FakeConn":
-            return self
-
-        async def __aexit__(self, *_: Any) -> bool:
-            return False
-
-        async def close(self) -> None:
-            pass
-
-        def __aiter__(self) -> "FakeConn":
-            return self
-
-        async def __anext__(self) -> Any:
-            raise StopAsyncIteration
-
-    class FakeRealtime:
-        def connect(self, **_kw: Any) -> FakeConn:
-            return FakeConn()
-
-    class FakeClient:
-        def __init__(self) -> None:
-            self.realtime = FakeRealtime()
-
-    # case 1: no camera at all, --no-camera flag passed
-    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock(), camera_worker=None)
-    handler = OpenaiRealtimeHandler(deps)
-    handler.client = FakeClient()
-    monkeypatch.setattr(type(handler.tool_manager), "start_up", MagicMock())
-    monkeypatch.setattr(type(handler.tool_manager), "shutdown", AsyncMock())
-
-    await handler._run_realtime_session()
-
-    session_tools = session_kwargs.get("session", {}).get("tools", [])
-    tool_names = [t["name"] for t in session_tools]
-    assert "head_tracking" not in tool_names, "case 1 failed: camera_worker=None"
-    assert "fake_tool" in tool_names, "case 1 failed: a non-head-tracking tool was unexpectedly excluded"
-
-    # case 2: camera is running but --head-tracker flag was not passed
-    session_kwargs.clear()
-    camera_worker = MagicMock()
-    camera_worker.head_tracker = None
-    deps = ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock(), camera_worker=camera_worker)
-    handler = OpenaiRealtimeHandler(deps)
-    handler.client = FakeClient()
-    monkeypatch.setattr(type(handler.tool_manager), "start_up", MagicMock())
-    monkeypatch.setattr(type(handler.tool_manager), "shutdown", AsyncMock())
-
-    await handler._run_realtime_session()
-
-    session_tools = session_kwargs.get("session", {}).get("tools", [])
-    tool_names = [t["name"] for t in session_tools]
-    assert "head_tracking" not in tool_names, "case 2 failed: camera_worker.head_tracker=None"
-    assert "fake_tool" in tool_names, "case 2 failed: a non-head-tracking tool was unexpectedly excluded"
