@@ -17,21 +17,6 @@ const GUIDE_HTML = `
   </p>
 
   <div class="guide-section">
-    <h4>The first line: describe the behavior</h4>
-    <p>
-      Start your script with a short description in quotes. In this app that first
-      line is special: it's the description the AI reads to decide when to call this
-      behavior as a tool, so make it clear and specific.
-    </p>
-    <pre>"Nod yes a couple of times to agree"
-look up
-look down
-look up
-look down</pre>
-    <p class="guide-note">Write it from the AI's point of view — what the behavior is for.</p>
-  </div>
-
-  <div class="guide-section">
     <h4>Basic movements</h4>
     <p><strong><code>look</code></strong> rotates the head to look in a direction:</p>
     <pre>look left

@@ -14,7 +14,6 @@ from typing import List, Optional
 from pathlib import Path
 from collections.abc import Callable, AsyncGenerator
 
-from fastrtc import AdditionalOutputs, audio_to_float32
 from scipy.signal import resample
 
 from reachy_mini import ReachyMini
@@ -41,6 +40,7 @@ from reachy_mini_conversation_app.config import (
     refresh_runtime_config_from_env,
     get_available_voices_for_backend,
 )
+from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_float32
 from reachy_mini_conversation_app.rmscript_routes import mount_rmscript_routes
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import initialize_tools
@@ -765,6 +765,26 @@ class LocalStream:
                 }
             )
 
+        try:
+            mount_personality_routes(
+                self._settings_app,
+                self.handler,
+                lambda: self._asyncio_loop,
+                persist_personality=self._persist_personality,
+                get_persisted_personality=self._read_persisted_personality,
+                apply_personality=self.apply_personality,
+                get_available_voices=self.get_available_voices,
+                get_current_voice=self.get_current_voice,
+                change_voice=self.change_voice,
+            )
+        except Exception:
+            logger.exception("Failed to mount personality routes; the personality UI will be unavailable")
+
+        try:
+            mount_rmscript_routes(self._settings_app, self.handler)
+        except Exception:
+            logger.exception("Failed to mount rmscript routes; the behaviors UI will be unavailable")
+
         self._settings_initialized = True
 
     async def _run_handler_startup_loop(self) -> None:
@@ -896,27 +916,6 @@ class LocalStream:
             # Capture loop for cross-thread personality actions
             loop = asyncio.get_running_loop()
             self._asyncio_loop = loop  # type: ignore[assignment]
-            # Mount personality routes now that loop and handler are available
-            try:
-                if self._settings_app is not None:
-                    mount_personality_routes(
-                        self._settings_app,
-                        self.handler,
-                        lambda: self._asyncio_loop,
-                        persist_personality=self._persist_personality,
-                        get_persisted_personality=self._read_persisted_personality,
-                        apply_personality=self.apply_personality,
-                        get_available_voices=self.get_available_voices,
-                        get_current_voice=self.get_current_voice,
-                        change_voice=self.change_voice,
-                    )
-            except Exception:
-                logger.exception("Failed to mount personality routes; the personality UI will be unavailable")
-            try:
-                if self._settings_app is not None:
-                    mount_rmscript_routes(self._settings_app, self.handler)
-            except Exception:
-                logger.exception("Failed to mount rmscript routes; the behaviors UI will be unavailable")
             self._tasks = [
                 asyncio.create_task(self._run_handler_startup_loop(), name="realtime-handler"),
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),

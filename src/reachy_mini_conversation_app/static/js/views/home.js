@@ -44,6 +44,9 @@ export async function mountHomeView({ outlet, signal, navigate }) {
   view.appendChild(status);
 
   let personalities;
+  // Tracks the active personality; written by renderChoices, read by the
+  // selection/edit handlers (which live in sibling scopes).
+  let current;
   try {
     personalities = await untilReady(listPersonalities, signal, () => {
       grid.replaceChildren();
@@ -60,7 +63,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
   // Render (and re-render, e.g. after a delete) the grid from a personalities payload.
   function renderChoices(data) {
     const choices = (data?.choices || []).filter((name) => name !== BUILT_IN_DEFAULT_OPTION);
-    const current = data?.current;
+    current = data?.current;
     const lockedTo = data?.locked ? data.locked_to : null;
 
     grid.replaceChildren();
@@ -89,6 +92,12 @@ export async function mountHomeView({ outlet, signal, navigate }) {
   renderChoices(personalities);
 
   function handleSelection(name) {
+    if (name === current) {
+      setPersonality(name);
+      setPendingApply(null);
+      navigate(ROUTES.TALK);
+      return;
+    }
     // Optimistic header update so the badge already reads the chosen
     // personality while the apply request is still in flight.
     setPersonality(name);
@@ -124,6 +133,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       const saveResult = await savePersonality({
         name: created.name,
         instructions: created.instructions,
+        greeting: created.greeting || null,
         tools_text: created.tools.join("\n"),
         voice: "", // falls back to backend default; user can change in Settings
       });
@@ -159,6 +169,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       initial: {
         name,
         instructions: data?.instructions || "",
+        greeting: data?.greeting || "",
         enabledTools: data?.enabled_tools || [],
       },
       signal,
@@ -171,6 +182,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
         // Strip the prefix: the save endpoint always writes under user_personalities/<name>.
         name: stripUserPrefix(name),
         instructions: edited.instructions,
+        greeting: edited.greeting,
         tools_text: edited.tools.join("\n"),
         voice: data?.voice || "", // keep the profile's existing voice
       });

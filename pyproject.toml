@@ -4,16 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reachy_mini_conversation_app"
-version = "0.7.0"
+version = "0.8.0"
 authors = [{ name = "Pollen Robotics", email = "contact@pollen-robotics.com" }]
 description = ""
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     #Media
-    "aiortc>=1.13.0",
     "av",
-    "fastrtc>=0.0.34",
     "huggingface-hub>=1.17.0",
     "httpx>=0.28.1",
 
@@ -36,30 +34,6 @@ dependencies = [
     # For local development against a checkout:
     #   rmscript = { path = "../rmscript", editable = true }
     "rmscript @ git+https://github.com/scienceetonnante/reachy-mini-script.git@v0.1.3",
-]
-
-[project.optional-dependencies]
-local_vision = [
-  "accelerate>=1.13.0",
-  "torch>=2.1",
-  "transformers==5.3.0",
-]
-yolo_vision = [
-  "ultralytics",
-  "supervision<0.28",
-  "opencv-python>=4.13.0.92",
-]
-mediapipe_vision = [
-  "mediapipe==0.10.14",
-]
-all_vision = [
-  "accelerate>=1.13.0",
-  "torch>=2.1",
-  "transformers==5.3.0",
-  "ultralytics",
-  "supervision<0.28",
-  "opencv-python>=4.13.0.92",
-  "mediapipe==0.10.14",
 ]
 
 [dependency-groups]
@@ -96,7 +70,6 @@ where = ["src"]
 reachy_mini_conversation_app = [
   "static/**/*",
   ".env.example",
-  "prompts/**/*.txt",
 ]
 reachy_talk_data = [
   "profiles/**/*.txt",

@@ -164,10 +164,10 @@ class RmscriptTool(Tool):
 
     def _capture(self, deps: ToolDependencies) -> str | None:
         """Grab the latest camera frame as base64 JPEG, or None if unavailable."""
-        if deps.camera_worker is None:
-            logger.warning("rmscript picture skipped: no camera worker")
+        if not deps.camera_enabled:
+            logger.warning("rmscript picture skipped: camera disabled")
             return None
-        frame = deps.camera_worker.get_latest_frame()
+        frame = deps.reachy_mini.media.get_frame()
         if frame is None:
             logger.warning("rmscript picture skipped: no frame available")
             return None

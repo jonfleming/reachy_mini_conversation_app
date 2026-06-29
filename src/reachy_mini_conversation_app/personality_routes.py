@@ -24,6 +24,7 @@ from .personality import (
     _sanitize_name,
     _write_profile,
     read_tools_for,
+    read_greeting_for,
     delete_personality,
     list_personalities,
     available_tools_for,
@@ -83,6 +84,10 @@ def mount_personality_routes(
         except Exception:
             return DEFAULT_OPTION
 
+    def _voice_override() -> Optional[str]:
+        current_voice_callback = get_current_voice or getattr(handler, "get_current_voice", None)
+        return current_voice_callback() if callable(current_voice_callback) else None
+
     @app.get("/personalities")
     def _list() -> dict:  # type: ignore
         choices = [DEFAULT_OPTION, *list_personalities()]
@@ -98,6 +103,7 @@ def mount_personality_routes(
     def _load(name: str) -> dict:  # type: ignore
         instr = read_instructions_for(name)
         tools_txt = read_tools_for(name)
+        greeting = read_greeting_for(name)
         voice = get_default_voice_for_backend()
         uses_default_voice = True
         if name != DEFAULT_OPTION:
@@ -111,6 +117,7 @@ def mount_personality_routes(
         enabled = [ln.strip() for ln in tools_txt.splitlines() if ln.strip() and not ln.strip().startswith("#")]
         return {
             "instructions": instr,
+            "greeting": greeting,
             "tools_text": tools_txt,
             "voice": voice,
             "uses_default_voice": uses_default_voice,
@@ -127,6 +134,7 @@ def mount_personality_routes(
             raw = {}
         name = str(raw.get("name", ""))
         instructions = str(raw.get("instructions", ""))
+        greeting = str(raw["greeting"]) if raw.get("greeting") is not None else None
         tools_text = str(raw.get("tools_text", ""))
         voice = (
             str(raw.get("voice", get_default_voice_for_backend()))
@@ -139,13 +147,20 @@ def mount_personality_routes(
             return JSONResponse({"ok": False, "error": "invalid_name"}, status_code=400)  # type: ignore
         try:
             logger.info(
-                "save: name=%r voice=%r instr_len=%d tools_len=%d",
+                "save: name=%r voice=%r instr_len=%d greeting_len=%d tools_len=%d",
                 sanitized_name,
                 voice,
                 len(instructions),
+                len(greeting or ""),
                 len(tools_text),
             )
-            _write_profile(sanitized_name, instructions, tools_text, voice or get_default_voice_for_backend())
+            _write_profile(
+                sanitized_name,
+                instructions,
+                tools_text,
+                voice or get_default_voice_for_backend(),
+                greeting,
+            )
             value = f"user_personalities/{sanitized_name}"
             choices = [DEFAULT_OPTION, *list_personalities()]
             return {"ok": True, "value": value, "choices": choices}
@@ -165,31 +180,43 @@ def mount_personality_routes(
                 {"ok": False, "error": "profile_locked", "locked_to": LOCKED_PROFILE},
                 status_code=403,
             )  # type: ignore
+        selected_name = payload.name or DEFAULT_OPTION
+        persist = bool(payload.persist)
+        persisted_choice = _startup_choice()
+
+        if selected_name == _current_choice():
+            if persist and persist_personality is not None:
+                try:
+                    voice_override = _voice_override()
+                    persist_personality(None if selected_name == DEFAULT_OPTION else selected_name, voice_override)
+                    persisted_choice = _startup_choice()
+                except Exception as e:
+                    logger.warning("Failed to persist startup personality: %s", e)
+            return {
+                "ok": True,
+                "status": "Personality unchanged.",
+                "startup": persisted_choice,
+            }
+
         loop = get_loop()
         if loop is None:
             return JSONResponse({"ok": False, "error": "loop_unavailable"}, status_code=503)  # type: ignore
 
-        sel_name = payload.name or DEFAULT_OPTION
-        persist_flag = bool(payload.persist)
-
         async def _do_apply() -> tuple[str, Optional[str]]:
-            sel = None if sel_name == DEFAULT_OPTION else sel_name
+            profile = None if selected_name == DEFAULT_OPTION else selected_name
             if apply_personality is not None:
-                status = await apply_personality(sel)
+                status = await apply_personality(profile)
             else:
-                status = await handler.apply_personality(sel)
-            current_voice_callback = get_current_voice or getattr(handler, "get_current_voice", None)
-            voice_override = current_voice_callback() if callable(current_voice_callback) else None
-            return status, voice_override
+                status = await handler.apply_personality(profile)
+            return status, _voice_override()
 
         try:
-            logger.info("apply: requested name=%r", sel_name)
+            logger.info("apply: requested name=%r", selected_name)
             fut = asyncio.run_coroutine_threadsafe(_do_apply(), loop)
             status, voice_override = fut.result(timeout=10)
-            persisted_choice = _startup_choice()
-            if persist_flag and persist_personality is not None:
+            if persist and persist_personality is not None:
                 try:
-                    persist_personality(None if sel_name == DEFAULT_OPTION else sel_name, voice_override)
+                    persist_personality(None if selected_name == DEFAULT_OPTION else selected_name, voice_override)
                     persisted_choice = _startup_choice()
                 except Exception as e:
                     logger.warning("Failed to persist startup personality: %s", e)

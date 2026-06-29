@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import List
 from pathlib import Path
 
-from .config import USER_PERSONALITIES_DIRNAME, config, get_default_voice_for_backend
+from .config import DEFAULT_PROFILES_DIRECTORY, USER_PERSONALITIES_DIRNAME, config, get_default_voice_for_backend
 from .tools.tool_constants import SystemTool
 
 
@@ -16,10 +16,6 @@ DEFAULT_OPTION = "(built-in default)"
 
 # Dev-only profiles, hidden from the UI, but still loadable via REACHY_MINI_CUSTOM_PROFILE
 UNLISTED_PROFILES = {"tedai"}
-
-
-def _prompts_dir() -> Path:
-    return Path(__file__).parent / "prompts"
 
 
 def _tools_dir() -> Path:
@@ -65,8 +61,8 @@ def read_instructions_for(name: str) -> str:
     """Read the instructions.txt content for the given profile name."""
     try:
         if name == DEFAULT_OPTION:
-            df = _prompts_dir() / "default_prompt.txt"
-            return df.read_text(encoding="utf-8").strip() if df.exists() else ""
+            target = DEFAULT_PROFILES_DIRECTORY / "default" / "instructions.txt"
+            return target.read_text(encoding="utf-8").strip() if target.exists() else ""
         target = resolve_profile_dir(name) / "instructions.txt"
         return target.read_text(encoding="utf-8").strip() if target.exists() else ""
     except Exception as e:
@@ -79,6 +75,20 @@ def read_tools_for(name: str) -> str:
         profile_name = "default" if name == DEFAULT_OPTION else name
         target = resolve_profile_dir(profile_name) / "tools.txt"
         return target.read_text(encoding="utf-8") if target.exists() else ""
+    except Exception:
+        return ""
+
+
+def read_greeting_for(name: str) -> str:
+    """Read the greeting.txt content for the given profile name."""
+    try:
+        profile_name = "default" if name == DEFAULT_OPTION else name
+        target = resolve_profile_dir(profile_name) / "greeting.txt"
+        if target.exists():
+            greeting = target.read_text(encoding="utf-8").strip()
+            if greeting:
+                return greeting
+        return ""
     except Exception:
         return ""
 
@@ -130,10 +140,23 @@ def delete_personality(name: str) -> bool:
     return False
 
 
-def _write_profile(sanitized_name: str, instructions: str, tools_text: str, voice: str | None = None) -> None:
+def _write_profile(
+    sanitized_name: str,
+    instructions: str,
+    tools_text: str,
+    voice: str | None = None,
+    greeting: str | None = None,
+) -> None:
     default_voice = get_default_voice_for_backend()
     target_dir = config.user_personalities_root() / sanitized_name
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "instructions.txt").write_text(instructions.strip() + "\n", encoding="utf-8")
     (target_dir / "tools.txt").write_text((tools_text or "").strip() + "\n", encoding="utf-8")
     (target_dir / "voice.txt").write_text((voice or default_voice).strip() + "\n", encoding="utf-8")
+    if greeting is not None:
+        greeting_file = target_dir / "greeting.txt"
+        greeting_text = greeting.strip()
+        if greeting_text:
+            greeting_file.write_text(greeting_text + "\n", encoding="utf-8")
+        elif greeting_file.exists():
+            greeting_file.unlink()

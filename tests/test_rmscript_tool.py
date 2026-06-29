@@ -23,7 +23,7 @@ def _make_deps(queued: List[Any]) -> MagicMock:
     deps.reachy_mini.get_current_head_pose.return_value = np.eye(4)
     deps.reachy_mini.get_current_joint_positions.return_value = ([0.0] * 7, [0.1, 0.2])
     deps.movement_manager.queue_move.side_effect = queued.append
-    deps.camera_worker = None
+    deps.camera_enabled = False
     return deps
 
 
@@ -157,8 +157,8 @@ def test_picture_returns_b64(monkeypatch: pytest.MonkeyPatch) -> None:
     """A `picture` action returns the latest camera frame as base64 JPEG."""
     queued: List[Any] = []
     deps = _make_deps(queued)
-    deps.camera_worker = MagicMock()
-    deps.camera_worker.get_latest_frame.return_value = np.zeros((4, 4, 3), dtype=np.uint8)
+    deps.camera_enabled = True
+    deps.reachy_mini.media.get_frame.return_value = np.zeros((4, 4, 3), dtype=np.uint8)
     monkeypatch.setattr(rmscript_tool, "save_debug_snapshot", lambda _frame, _label: b"jpegbytes")
 
     cls = make_rmscript_tool_class('"t"\npicture', "t")

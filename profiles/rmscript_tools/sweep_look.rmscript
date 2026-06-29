@@ -1,8 +1,7 @@
-"Sweep head from left to right while rotating the body, pausing at each extreme, then return to center"
+"Do a sweep look to check the surroundings by taking a picture"
 
-# turn rotates body and head together. 162 = 0.9 * 180°; superslow = 3s transition.
 body left 162 superfast
-wait 1s
+wait 0.5s
 picture
-play go_sleep
 body center superfast
+play angerdog1

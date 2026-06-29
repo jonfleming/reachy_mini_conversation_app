@@ -9,7 +9,7 @@ import logging
 import importlib
 import importlib.util
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Dict, List, Callable, ClassVar, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Callable, ClassVar, Sequence, TypedDict
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -41,9 +41,17 @@ class ToolDependencies:
     movement_manager: Any  # MovementManager from moves.py
     # Optional deps
     instance_path: str | Path | None = None
-    camera_worker: Any | None = None  # CameraWorker for frame buffering
-    vision_processor: Any | None = None
+    camera_enabled: bool = False
     motion_duration_s: float = 1.0
+
+
+class ToolSpec(TypedDict):
+    """Function-calling spec for a tool, in the OpenAI-compatible shape."""
+
+    type: Literal["function"]
+    name: str
+    description: str
+    parameters: dict[str, Any]  # arbitrary JSON Schema
 
 
 class Tool(abc.ABC):
@@ -65,7 +73,7 @@ class Tool(abc.ABC):
     description: str
     parameters_schema: Dict[str, Any]
 
-    def spec(self) -> Dict[str, Any]:
+    def spec(self) -> ToolSpec:
         """Return the function spec for LLM consumption."""
         return {
             "type": "function",
@@ -81,7 +89,7 @@ class Tool(abc.ABC):
 
 
 ALL_TOOLS: Dict[str, Tool] = {}
-ALL_TOOL_SPECS: List[Dict[str, Any]] = []
+ALL_TOOL_SPECS: list[ToolSpec] = []
 _TOOLS_INITIALIZED = False
 _TOOLS_SIGNATURE: tuple[str, str, str | None, bool, str | None] | None = None
 _TOOLS_INSTANCE_PATH: str | Path | None = None
@@ -538,19 +546,11 @@ def initialize_tools(instance_path: str | Path | None = None, *, force: bool = F
     _TOOLS_SIGNATURE = signature
 
 
-def get_tool_specs(exclusion_list: list[str] | None = None) -> list[Dict[str, Any]]:
+def get_tool_specs(exclusion_list: list[str] | None = None) -> list[ToolSpec]:
     """Get tool specs, optionally excluding some tools."""
     initialize_tools()
     exclusion_list = exclusion_list or []
-    return [spec for spec in ALL_TOOL_SPECS if spec.get("name") not in exclusion_list]
-
-
-def get_active_tool_specs(deps: ToolDependencies) -> list[Dict[str, Any]]:
-    """Get tool specs filtered by what the current session deps support."""
-    exclusion_list: list[str] = []
-    if not (deps.camera_worker and deps.camera_worker.head_tracker):
-        exclusion_list.append("head_tracking")
-    return get_tool_specs(exclusion_list)
+    return [spec for spec in ALL_TOOL_SPECS if spec["name"] not in exclusion_list]
 
 
 # Dispatcher
