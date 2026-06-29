@@ -1,1 +1,1 @@
-{"id":"10b246e295b29d573ff402ceae1054a0","fullName":"tests.test_mcp_client#test_build_namespaced_tool_name_normalizes_tool_segment","name":"test_build_namespaced_tool_name_normalizes_tool_segment","status":"passed","testResultsByEnv":{"default":"cca5576805422433d0472aa7ea64554b"}}
+{"id":"10b246e295b29d573ff402ceae1054a0","fullName":"tests.test_mcp_client#test_build_namespaced_tool_name_normalizes_tool_segment","name":"test_build_namespaced_tool_name_normalizes_tool_segment","status":"passed","testResultsByEnv":{"default":"e82bbcf79bbbe44269981933ecda55ee"}}

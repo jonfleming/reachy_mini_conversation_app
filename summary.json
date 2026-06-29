@@ -1,69 +1,45 @@
 {
   "stats": {
-    "total": 261,
-    "passed": 261,
-    "new": 7
+    "total": 264,
+    "passed": 264,
+    "new": 3
   },
   "status": "passed",
   "newTests": [
     {
-      "id": "e7563d35fbe8d0d2a3b380465ba18795",
-      "name": "test_delete_removes_user_profile",
+      "id": "5169f018726e6654cd45eb8302b407d8",
+      "name": "test_settings_api_uses_versioned_routes_only",
       "status": "passed",
-      "duration": 1
+      "duration": 43
     },
     {
-      "id": "d5fa2b66a7ac601d1be2ab193e26b00a",
-      "name": "test_route_refuses_deleting_current_profile",
+      "id": "5be6c31878a69dbf7e3f88da07279f98",
+      "name": "test_settings_ui_detaches_framework_catch_all_before_api_routes",
       "status": "passed",
-      "duration": 16
+      "duration": 41
     },
     {
-      "id": "38fb4a2383b61fa2ed8e4a2fff1c1938",
-      "name": "test_route_deletes_inactive_profile",
+      "id": "00370d02ae54932a7f5bc8f6e7da0619",
+      "name": "test_personality_routes_mount_versioned_paths",
       "status": "passed",
-      "duration": 16
-    },
-    {
-      "id": "13cd5a836ece8ddb0cbdff22b34e1ba6",
-      "name": "test_route_returns_404_for_non_deletable",
-      "status": "passed",
-      "duration": 14
-    },
-    {
-      "id": "5cc0c213c044d04aedbe4903a9463982",
-      "name": "test_delete_refuses_builtin_profile",
-      "status": "passed",
-      "duration": 0
-    },
-    {
-      "id": "aa15fd2abe1bea9abd76a8d27b408315",
-      "name": "test_route_refuses_deleting_startup_profile",
-      "status": "passed",
-      "duration": 14
-    },
-    {
-      "id": "adcd4880feaa466f4716f2ee2e0471d9",
-      "name": "test_delete_refuses_path_outside_user_root",
-      "status": "passed",
-      "duration": 1
+      "duration": 26
     }
   ],
   "flakyTests": [],
   "retryTests": [],
   "checks": [],
   "name": "Conversation App Tests",
-  "duration": 9709,
-  "createdAt": 1782744412815,
+  "duration": 10056,
+  "createdAt": 1782744906441,
   "plugin": "Awesome",
   "meta": {
-    "reportId": "088dd91b-7c31-4bb6-8f4a-57eec0fef8f0",
+    "reportId": "7939301d-c627-475e-95ea-b3de837ada22",
     "singleFile": false,
     "withTestResultsLinks": true
   },
   "pluginId": "awesome",
   "pullRequestHref": "",
-  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28380609779",
+  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28381136275",
   "href": "awesome/",
   "coverage": 68
 }

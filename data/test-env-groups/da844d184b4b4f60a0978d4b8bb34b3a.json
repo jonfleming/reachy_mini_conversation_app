@@ -1,1 +1,1 @@
-{"id":"da844d184b4b4f60a0978d4b8bb34b3a","fullName":"tests.test_config_name_collisions#test_huggingface_backend_does_not_resolve_model_name","name":"test_huggingface_backend_does_not_resolve_model_name","status":"passed","testResultsByEnv":{"default":"a873ec1d6055075c4821bd8b53fbb73d"}}
+{"id":"da844d184b4b4f60a0978d4b8bb34b3a","fullName":"tests.test_config_name_collisions#test_huggingface_backend_does_not_resolve_model_name","name":"test_huggingface_backend_does_not_resolve_model_name","status":"passed","testResultsByEnv":{"default":"784335dad492945b63ad8dfb41ae72a8"}}

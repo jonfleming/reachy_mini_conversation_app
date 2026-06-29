@@ -1,1 +1,1 @@
-{"id":"821a7652bdf11a71504601642fbad06f","fullName":"tests.test_openai_realtime#test_handler_uses_startup_voice_at_startup","name":"test_handler_uses_startup_voice_at_startup","status":"passed","testResultsByEnv":{"default":"852a450e874839195fd34645f9db0121"}}
+{"id":"821a7652bdf11a71504601642fbad06f","fullName":"tests.test_openai_realtime#test_handler_uses_startup_voice_at_startup","name":"test_handler_uses_startup_voice_at_startup","status":"passed","testResultsByEnv":{"default":"6de13fc3f082ec0aad91bc3c8b10c42e"}}

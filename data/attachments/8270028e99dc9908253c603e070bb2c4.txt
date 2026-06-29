@@ -1,1 +1,0 @@
-2026-06-29 14:46:51,175 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: ok_tool (id=c1)
