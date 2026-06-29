@@ -84,9 +84,13 @@ def test_single_antenna_keeps_other_in_place() -> None:
     _run(cls(), deps)
 
     move = queued[0]
-    # left (index 1) -> 180deg; right (index 0) held at its current 0.1
+    # right (index 0) is held at its current 0.1; left (index 1) gets the
+    # compiler's "down" angle verbatim — assert against the IR, not a hardcoded
+    # constant, since the sign convention lives in the rmscript compiler.
+    ir_left = cls._ir[0].antennas[1]
+    assert ir_left is not None
     assert move.target_antennas[0] == pytest.approx(0.1)
-    assert move.target_antennas[1] == pytest.approx(np.pi)
+    assert move.target_antennas[1] == pytest.approx(ir_left)
 
 
 def test_prepare_preview_returns_tool_and_duration() -> None:
