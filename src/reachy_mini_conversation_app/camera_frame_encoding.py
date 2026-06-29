@@ -9,20 +9,28 @@ import av
 import numpy as np
 from numpy.typing import NDArray
 
+from .config import _env_flag
+
 
 logger = logging.getLogger(__name__)
 
+# When set, deliberate snapshots are also written to TMPDIR for inspection.
+DEBUG_SNAPSHOT_ENV = "REACHY_MINI_DEBUG_SNAPSHOTS"
+
 
 def save_debug_snapshot(frame: NDArray[np.uint8], label: str) -> bytes:
-    """Encode a deliberate camera snapshot, save a debug copy to TMPDIR, return the JPEG.
+    """Encode a deliberate camera snapshot and return the JPEG.
 
-    Use at intentional capture points (camera tool, rmscript picture) — not the
-    continuous video loop, which would write a file every frame.
+    When the ``REACHY_MINI_DEBUG_SNAPSHOTS`` env flag is set, also write a copy
+    to TMPDIR for inspection. Use at intentional capture points (camera tool,
+    rmscript picture) — not the continuous video loop, which would write a file
+    every frame.
     """
     jpeg = encode_bgr_frame_as_jpeg(frame)
-    path = Path(tempfile.gettempdir()) / f"reachy_camera_{label}.jpg"
-    path.write_bytes(jpeg)
-    logger.info("camera snapshot '%s' (%dx%d) saved to %s", label, frame.shape[1], frame.shape[0], path)
+    if _env_flag(DEBUG_SNAPSHOT_ENV):
+        path = Path(tempfile.gettempdir()) / f"reachy_camera_{label}.jpg"
+        path.write_bytes(jpeg)
+        logger.info("camera snapshot '%s' (%dx%d) saved to %s", label, frame.shape[1], frame.shape[0], path)
     return jpeg
 
 
