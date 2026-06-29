@@ -18,6 +18,9 @@ from .personality import _sanitize_name
 # Audio extensions accepted for upload and listing (match _resolve_sound).
 SOUND_EXTENSIONS = ("wav", "mp3", "ogg")
 
+# Upper bound for a single uploaded sound (short clips; the bundled ones are <1 MB).
+MAX_SOUND_BYTES = 10 * 1024 * 1024
+
 
 def _sounds_root() -> Path:
     return config.rmscript_tools_root() / "sounds"
@@ -49,6 +52,8 @@ def save_sound(filename: str, data: bytes) -> str:
     suffix = Path(filename).suffix.lstrip(".").lower()
     if suffix not in SOUND_EXTENSIONS:
         raise ValueError(f"unsupported sound format: {suffix!r}")
+    if len(data) > MAX_SOUND_BYTES:
+        raise ValueError(f"sound exceeds the {MAX_SOUND_BYTES // (1024 * 1024)} MB limit")
     stem = _sanitize_name(Path(filename).stem)
     if not stem:
         raise ValueError("invalid sound name")

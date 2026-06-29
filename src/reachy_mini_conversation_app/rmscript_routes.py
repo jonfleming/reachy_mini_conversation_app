@@ -18,6 +18,7 @@ from rmscript import compile_script
 from fastapi.responses import JSONResponse
 
 from .sound_library import (
+    MAX_SOUND_BYTES,
     save_sound,
     delete_sound,
     list_user_sounds,
@@ -128,9 +129,19 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
 
     @app.post("/rmscript/sounds")
     async def _upload_sound(file: UploadFile = File(...)) -> Any:
-        data = await file.read()
+        # Read with a cap so an oversized upload never fully lands in memory.
+        chunks: List[bytes] = []
+        total = 0
+        while chunk := await file.read(64 * 1024):
+            total += len(chunk)
+            if total > MAX_SOUND_BYTES:
+                limit_mb = MAX_SOUND_BYTES // (1024 * 1024)
+                return JSONResponse(
+                    {"ok": False, "error": f"sound exceeds the {limit_mb} MB limit"}, status_code=400
+                )
+            chunks.append(chunk)
         try:
-            name = save_sound(file.filename or "", data)
+            name = save_sound(file.filename or "", b"".join(chunks))
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         return {"ok": True, "name": name, **_sounds_payload()}
