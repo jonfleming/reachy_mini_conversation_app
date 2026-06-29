@@ -22,7 +22,25 @@ import { openScriptManual } from "../components/script-manual.js";
 import { openSoundLibrary } from "../components/sound-library.js";
 import { confirmDialog } from "../components/confirm-dialog.js";
 
-const NEW_TEMPLATE = '"Describe what this behavior does (the AI reads this)"\n\nlook left\nwait 1s\nlook right\n';
+const NEW_DESCRIPTION = "Describe what this behavior does (the AI reads this)";
+const NEW_BODY = "look left\nwait 1s\nlook right\n";
+
+// An rmscript file starts with a quoted description, then the movement body. The
+// editor edits the body alone while the description lives in its own field; these
+// helpers split a saved file apart and recompose it. The composed prefix is always
+// two lines (description + blank), so compiler error lines map to body line N - 2.
+const PREFIX_LINES = 2;
+
+function splitSource(source) {
+  const m = source.match(/^\s*"([^"\n]*)"/);
+  if (!m) return { description: "", body: source };
+  return { description: m[1], body: source.slice(m[0].length).replace(/^[ \t]*(\r?\n)+/, "") };
+}
+
+function composeSource(description, body) {
+  const desc = (description || "").replace(/"/g, "").trim();
+  return `"${desc}"\n\n${body}`;
+}
 
 export async function mountBehaviorsView({ outlet, signal }) {
   const listEl = h("div", { class: "behaviors-list" }, h("p", { class: "muted" }, "Loading…"));
@@ -143,8 +161,10 @@ export async function mountBehaviorsView({ outlet, signal }) {
 
   async function openEditor(name) {
     destroyEditor();
-    let source = NEW_TEMPLATE;
+    let description = NEW_DESCRIPTION;
+    let body = NEW_BODY;
     if (name) {
+      let source;
       try {
         source = (await loadBehavior(name)).source || "";
       } catch (error) {
@@ -152,6 +172,7 @@ export async function mountBehaviorsView({ outlet, signal }) {
         return;
       }
       if (signal.aborted) return;
+      ({ description, body } = splitSource(source));
     }
 
     const nameInput = h("input", {
@@ -161,6 +182,12 @@ export async function mountBehaviorsView({ outlet, signal }) {
       value: name || "",
     });
     if (name) nameInput.disabled = true;
+    const descInput = h("input", {
+      class: "settings-input",
+      type: "text",
+      placeholder: "What this behavior does (the AI reads this)",
+      value: description,
+    });
     const status = h("p", { class: "behaviors-verify", role: "status", "aria-live": "polite" });
     const editorMount = h("div", {});
     const saveBtn = h("button", { class: "btn btn--primary" }, "Save");
@@ -168,15 +195,17 @@ export async function mountBehaviorsView({ outlet, signal }) {
     const stopBtn = h("button", { class: "btn btn--ghost", disabled: true }, "Stop");
     let valid = false;
 
-    function scheduleVerify(src) {
+    const currentSource = () => composeSource(descInput.value, getContent(editor));
+
+    function scheduleVerify() {
       if (verifyTimer) clearTimeout(verifyTimer);
-      verifyTimer = setTimeout(() => runVerify(src), 400);
+      verifyTimer = setTimeout(runVerify, 400);
     }
 
-    async function runVerify(src) {
+    async function runVerify() {
       let res;
       try {
-        res = await verifyRmscript(src);
+        res = await verifyRmscript(currentSource());
       } catch {
         return;
       }
@@ -187,12 +216,14 @@ export async function mountBehaviorsView({ outlet, signal }) {
       previewBtn.disabled = !valid || previewing;
       if (res.success) {
         status.classList.remove("is-error");
-        status.textContent = res.description ? `✓ Valid — ${res.description}` : "✓ Valid";
+        status.textContent = "✓ Valid";
       } else {
         status.classList.add("is-error");
         const err = res.errors && res.errors[0];
-        status.textContent = err ? `Line ${err.line ?? "?"}: ${err.message}` : "Invalid script.";
-        if (err && err.line) showErrorLine(editor, err.line);
+        // Compiler lines count the description prefix; the editor shows the body alone.
+        const bodyLine = err && err.line ? Math.max(1, err.line - PREFIX_LINES) : null;
+        status.textContent = err ? `Line ${bodyLine ?? "?"}: ${err.message}` : "Invalid script.";
+        if (bodyLine) showErrorLine(editor, bodyLine);
       }
     }
 
@@ -204,6 +235,12 @@ export async function mountBehaviorsView({ outlet, signal }) {
         { class: "settings-field" },
         h("span", { class: "settings-label" }, "Name"),
         nameInput
+      ),
+      h(
+        "label",
+        { class: "settings-field" },
+        h("span", { class: "settings-label" }, "Description"),
+        descInput
       ),
       editorMount,
       status,
@@ -219,8 +256,9 @@ export async function mountBehaviorsView({ outlet, signal }) {
     editorHost.replaceChildren(panel);
     editorHost.hidden = false;
 
-    editor = createRmscriptEditor(editorMount, source, { onChange: scheduleVerify });
-    runVerify(source);
+    editor = createRmscriptEditor(editorMount, body, { onChange: scheduleVerify });
+    descInput.addEventListener("input", scheduleVerify);
+    runVerify();
 
     // Reset the buttons to idle; pass a status message, or null to leave it as-is.
     function endPreview(message) {
@@ -245,7 +283,7 @@ export async function mountBehaviorsView({ outlet, signal }) {
       status.textContent = "Playing on robot…";
       let res;
       try {
-        res = await previewBehavior(getContent(editor));
+        res = await previewBehavior(currentSource());
       } catch (error) {
         endPreview(null);
         status.classList.add("is-error");
@@ -270,12 +308,12 @@ export async function mountBehaviorsView({ outlet, signal }) {
         return;
       }
       try {
-        await saveBehavior(finalName, getContent(editor));
+        await saveBehavior(finalName, currentSource());
       } catch (error) {
         status.classList.add("is-error");
         const errs = error?.body?.errors;
         status.textContent = errs?.length
-          ? `Line ${errs[0].line ?? "?"}: ${errs[0].message}`
+          ? `Line ${Math.max(1, (errs[0].line ?? PREFIX_LINES + 1) - PREFIX_LINES)}: ${errs[0].message}`
           : `Failed to save: ${describeError(error)}`;
         return;
       }
