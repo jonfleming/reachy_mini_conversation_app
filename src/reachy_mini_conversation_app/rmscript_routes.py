@@ -11,6 +11,7 @@ that task and clears the queue.
 from __future__ import annotations
 import asyncio
 import logging
+import contextlib
 from typing import Any, Dict, List
 
 from fastapi import File, FastAPI, Request, UploadFile
@@ -51,11 +52,18 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
     # In-flight preview task.
     preview: Dict[str, Any] = {"task": None}
 
-    def _cancel_task() -> None:
-        """Cancel the running preview task, if any, and forget it."""
+    async def _cancel_task() -> None:
+        """Cancel the running preview task, if any, and wait for it to unwind.
+
+        Awaiting before the caller clears the queue / starts a new preview
+        prevents the old task — cancellation is cooperative and only lands at
+        its next ``await`` — from enqueuing moves after the queue was cleared.
+        """
         task = preview["task"]
         if task is not None and not task.done():
             task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         preview["task"] = None
 
     async def _run_preview(tool: RmscriptTool) -> None:
@@ -73,14 +81,14 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
         tool, duration = prepare_preview(source)
         if tool is None:
             return JSONResponse({"ok": False, "error": "compile_failed"}, status_code=400)
-        _cancel_task()
+        await _cancel_task()
         handler.deps.movement_manager.clear_move_queue()
         preview["task"] = asyncio.create_task(_run_preview(tool))
         return {"ok": True, "duration": duration}
 
     @app.post("/rmscript/abort")
     async def _abort() -> dict:  # type: ignore
-        _cancel_task()
+        await _cancel_task()
         handler.deps.movement_manager.clear_move_queue()
         return {"ok": True}
 
