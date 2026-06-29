@@ -1,1 +1,1 @@
-{"id":"f822fd5a24572d75fee51d95bc60cb59","fullName":"tests.test_openai_realtime#test_tool_result_followup_uses_bare_response_create","name":"test_tool_result_followup_uses_bare_response_create","status":"passed","testResultsByEnv":{"default":"df239ed9c614716ccbad3637ad8acc8a"}}
+{"id":"f822fd5a24572d75fee51d95bc60cb59","fullName":"tests.test_openai_realtime#test_tool_result_followup_uses_bare_response_create","name":"test_tool_result_followup_uses_bare_response_create","status":"passed","testResultsByEnv":{"default":"697ac2b827aba7185beb0b30b1adbe35"}}

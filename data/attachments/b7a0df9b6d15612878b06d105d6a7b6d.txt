@@ -1,1 +1,0 @@
-2026-06-25 12:14:28,071 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: notif (id=c1)

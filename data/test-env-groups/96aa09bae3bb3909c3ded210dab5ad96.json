@@ -1,1 +1,1 @@
-{"id":"96aa09bae3bb3909c3ded210dab5ad96","fullName":"tests.test_openai_realtime#test_compute_response_cost","name":"test_compute_response_cost[missing_details]","status":"passed","testResultsByEnv":{"default":"597d8e0ac86d10450f739598ed459b12"}}
+{"id":"96aa09bae3bb3909c3ded210dab5ad96","fullName":"tests.test_openai_realtime#test_compute_response_cost","name":"test_compute_response_cost[mixed]","status":"passed","testResultsByEnv":{"default":"c81ba72473800da13d8d42cb95734dfc"}}
