@@ -1,1 +1,1 @@
-{"id":"42d5634df0c19f2f93679c2f846155b3","fullName":"tests.test_huggingface_realtime#test_build_realtime_client_uses_direct_hf_ws_url","name":"test_build_realtime_client_uses_direct_hf_ws_url","status":"passed","testResultsByEnv":{"default":"94c58ad17b5410c8575973d2aad36316"}}
+{"id":"42d5634df0c19f2f93679c2f846155b3","fullName":"tests.test_huggingface_realtime#test_build_realtime_client_uses_direct_hf_ws_url","name":"test_build_realtime_client_uses_direct_hf_ws_url","status":"passed","testResultsByEnv":{"default":"e835d4edd7088abb0740d753aa4d4fc5"}}

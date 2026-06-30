@@ -1,5 +1,0 @@
-2026-06-29 14:55:05,673 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: a (id=1)
-2026-06-29 14:55:05,673 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: b (id=2)
-2026-06-29 14:55:05,673 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: c (id=3)
-2026-06-29 14:55:05,724 INFO reachy_mini_conversation_app.tools.background_tool_manager:250 | Cancelled tool: a (id=a-1-141.174352788)
-2026-06-29 14:55:05,724 INFO reachy_mini_conversation_app.tools.background_tool_manager:250 | Cancelled tool: b (id=b-2-141.174580191)

@@ -1,45 +1,33 @@
 {
   "stats": {
-    "total": 264,
-    "passed": 264,
-    "new": 3
+    "total": 265,
+    "passed": 265,
+    "new": 1
   },
   "status": "passed",
   "newTests": [
     {
-      "id": "5169f018726e6654cd45eb8302b407d8",
-      "name": "test_settings_api_uses_versioned_routes_only",
+      "id": "f4dc6aab32281c47b66a8e9de743bdcf",
+      "name": "test_personality_routes_startup_choice_survives_runtime_profile_change",
       "status": "passed",
-      "duration": 43
-    },
-    {
-      "id": "5be6c31878a69dbf7e3f88da07279f98",
-      "name": "test_settings_ui_detaches_framework_catch_all_before_api_routes",
-      "status": "passed",
-      "duration": 41
-    },
-    {
-      "id": "00370d02ae54932a7f5bc8f6e7da0619",
-      "name": "test_personality_routes_mount_versioned_paths",
-      "status": "passed",
-      "duration": 26
+      "duration": 17
     }
   ],
   "flakyTests": [],
   "retryTests": [],
   "checks": [],
   "name": "Conversation App Tests",
-  "duration": 10056,
-  "createdAt": 1782744906441,
+  "duration": 9933,
+  "createdAt": 1782809491805,
   "plugin": "Awesome",
   "meta": {
-    "reportId": "7939301d-c627-475e-95ea-b3de837ada22",
+    "reportId": "80115c52-00fa-475b-8e78-0700cd882200",
     "singleFile": false,
     "withTestResultsLinks": true
   },
   "pluginId": "awesome",
   "pullRequestHref": "",
-  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28381136275",
+  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28432166578",
   "href": "awesome/",
   "coverage": 68
 }

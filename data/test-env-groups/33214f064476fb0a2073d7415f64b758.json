@@ -1,1 +1,1 @@
-{"id":"33214f064476fb0a2073d7415f64b758","fullName":"tests.test_huggingface_realtime#test_handler_ignores_unsupported_hf_profile_voice","name":"test_handler_ignores_unsupported_hf_profile_voice","status":"passed","testResultsByEnv":{"default":"c33619a6f8f63ba8df74214c2d0b3885"}}
+{"id":"33214f064476fb0a2073d7415f64b758","fullName":"tests.test_huggingface_realtime#test_handler_ignores_unsupported_hf_profile_voice","name":"test_handler_ignores_unsupported_hf_profile_voice","status":"passed","testResultsByEnv":{"default":"13ec48a0c76509bc0247eb403be80293"}}

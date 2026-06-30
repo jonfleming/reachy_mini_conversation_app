@@ -1,0 +1,2 @@
+2026-06-30 08:51:31,165 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: first (id=1)
+2026-06-30 08:51:31,185 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: second (id=2)

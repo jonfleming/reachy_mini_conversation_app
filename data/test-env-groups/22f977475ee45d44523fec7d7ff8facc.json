@@ -1,1 +1,1 @@
-{"id":"22f977475ee45d44523fec7d7ff8facc","fullName":"tests.test_mcp_client#test_validate_http_mcp_url_rejects_non_http_scheme","name":"test_validate_http_mcp_url_rejects_non_http_scheme","status":"passed","testResultsByEnv":{"default":"7b020ccb513b62048c845011905b4b19"}}
+{"id":"22f977475ee45d44523fec7d7ff8facc","fullName":"tests.test_mcp_client#test_validate_http_mcp_url_rejects_non_http_scheme","name":"test_validate_http_mcp_url_rejects_non_http_scheme","status":"passed","testResultsByEnv":{"default":"284a7049ba0fa5236f50d5f6926e7284"}}
