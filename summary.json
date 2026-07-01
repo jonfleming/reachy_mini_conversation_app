@@ -1,20 +1,44 @@
 {
   "stats": {
-    "total": 267,
-    "passed": 267,
-    "new": 2
+    "total": 272,
+    "passed": 272,
+    "new": 6
   },
   "status": "passed",
   "newTests": [
     {
-      "id": "0d3787e6b9f6c54c4cd225c67f67a908",
-      "name": "test_explicit_default_profile_does_not_fall_back_to_itself",
+      "id": "1c79825615446017c572b666fa6d7b1c",
+      "name": "test_resolve_tool_space_attaches_auth_header_for_private_space",
       "status": "passed",
-      "duration": 3
+      "duration": 1
     },
     {
-      "id": "6583c13f6f0ed49c7dc6fb8ae73e025a",
-      "name": "test_session_instructions_fall_back_to_default_for_incomplete_profile",
+      "id": "abf29ed8405a12a8fc343f0a43655d89",
+      "name": "test_tool_spaces_add_installs_private_space_with_token",
+      "status": "passed",
+      "duration": 4
+    },
+    {
+      "id": "9a6415c653a6db710a62b9d964073833",
+      "name": "test_resolve_tool_space_omits_auth_header_for_public_space",
+      "status": "passed",
+      "duration": 2
+    },
+    {
+      "id": "48090f6ae4bd53024c758464e44b549b",
+      "name": "test_tool_spaces_add_private_space_without_token_hints_at_auth",
+      "status": "passed",
+      "duration": 4
+    },
+    {
+      "id": "313bf155fe64d1349a1a570df86d54c7",
+      "name": "test_tool_spaces_remove_disables_tools_in_profile",
+      "status": "passed",
+      "duration": 27
+    },
+    {
+      "id": "b179d9d2bc799d3c52596da4d0e10777",
+      "name": "test_resolve_tool_space_prefers_app_config_hf_token",
       "status": "passed",
       "duration": 1
     }
@@ -23,17 +47,17 @@
   "retryTests": [],
   "checks": [],
   "name": "Conversation App Tests",
-  "duration": 9799,
-  "createdAt": 1782823192620,
+  "duration": 9838,
+  "createdAt": 1782897074874,
   "plugin": "Awesome",
   "meta": {
-    "reportId": "4b49d572-ec01-420f-bf98-f2de022a8977",
+    "reportId": "0b32bd30-9a11-4036-98c9-27bb77dd9d08",
     "singleFile": false,
     "withTestResultsLinks": true
   },
   "pluginId": "awesome",
   "pullRequestHref": "",
-  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28444906405",
+  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28506574785",
   "href": "awesome/",
   "coverage": 69
 }

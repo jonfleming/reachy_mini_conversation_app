@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_9894c718b16fb84e_dance_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.3">coverage.py v7.14.3</a>,
-            created at 2026-06-30 12:39 +0000
+            created at 2026-07-01 09:11 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -451,8 +451,8 @@
     <p class="pln"><span class="n"><a id="t369" href="#t369">369</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t370" href="#t370">370</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t371" href="#t371">371</a></span><span class="t"><span class="key">def</span> <span class="nam">_resolve_remote_tools</span><span class="op">(</span><span class="nam">tool_names</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span><span class="op">,</span> <span class="nam">instance_path</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="nam">Path</span> <span class="op">|</span> <span class="key">None</span><span class="op">)</span> <span class="op">-></span> <span class="nam">list</span><span class="op">[</span><span class="nam">RemoteMcpTool</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t372" href="#t372">372</a></span><span class="t">    <span class="str">"""Resolve installed public Space tools enabled by the active profile."""</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t373" href="#t373">373</a></span><span class="t">    <span class="key">from</span> <span class="nam">reachy_mini_conversation_app</span><span class="op">.</span><span class="nam">tool_spaces</span> <span class="key">import</span> <span class="nam">read_installed_tool_spaces</span><span class="op">,</span> <span class="nam">resolve_public_tool_space_sync</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t372" href="#t372">372</a></span><span class="t">    <span class="str">"""Resolve installed Space tools enabled by the active profile."""</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t373" href="#t373">373</a></span><span class="t">    <span class="key">from</span> <span class="nam">reachy_mini_conversation_app</span><span class="op">.</span><span class="nam">tool_spaces</span> <span class="key">import</span> <span class="nam">resolve_tool_space_sync</span><span class="op">,</span> <span class="nam">read_installed_tool_spaces</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t374" href="#t374">374</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t375" href="#t375">375</a></span><span class="t">    <span class="nam">remote_tools</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">RemoteMcpTool</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t376" href="#t376">376</a></span><span class="t">    <span class="key">for</span> <span class="nam">installed_space</span> <span class="key">in</span> <span class="nam">read_installed_tool_spaces</span><span class="op">(</span><span class="nam">instance_path</span><span class="op">)</span><span class="op">.</span><span class="nam">spaces</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -465,7 +465,7 @@
     <p class="run"><span class="n"><a id="t383" href="#t383">383</a></span><span class="t">            <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t384" href="#t384">384</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t385" href="#t385">385</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t386" href="#t386">386</a></span><span class="t">            <span class="nam">resolved_space</span> <span class="op">=</span> <span class="nam">resolve_public_tool_space_sync</span><span class="op">(</span><span class="nam">installed_space</span><span class="op">.</span><span class="nam">slug</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t386" href="#t386">386</a></span><span class="t">            <span class="nam">resolved_space</span> <span class="op">=</span> <span class="nam">resolve_tool_space_sync</span><span class="op">(</span><span class="nam">installed_space</span><span class="op">.</span><span class="nam">slug</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t387" href="#t387">387</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t388" href="#t388">388</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t389" href="#t389">389</a></span><span class="t">                <span class="str">"Space '%s' is unavailable, skipping its tools (%s): %s"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -660,7 +660,7 @@
             <a class="nav" href="z_9894c718b16fb84e_dance_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.14.3">coverage.py v7.14.3</a>,
-            created at 2026-06-30 12:39 +0000
+            created at 2026-07-01 09:11 +0000
         </p>
     </div>
 </footer>
