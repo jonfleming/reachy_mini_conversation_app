@@ -1,51 +1,69 @@
 {
   "stats": {
-    "total": 275,
-    "passed": 275,
-    "new": 4
+    "total": 231,
+    "passed": 231,
+    "new": 7
   },
   "status": "passed",
   "newTests": [
     {
-      "id": "3764ed8fd95a79290d4a3c4ce70540d5",
-      "name": "test_wake_up_if_sleeping_skips_non_sleep_head_pose",
-      "status": "passed",
-      "duration": 1
-    },
-    {
-      "id": "67fef856ed9b77baf4430097e869ae01",
-      "name": "test_wake_up_if_sleeping_runs_wake_up_from_sleep_head_pose",
-      "status": "passed",
-      "duration": 1
-    },
-    {
-      "id": "292496b9e30c04066358f78226578848",
-      "name": "test_run_go_to_sleep_tool_uses_runtime_callback",
-      "status": "passed",
-      "duration": 3
-    },
-    {
-      "id": "26c83be9fbda47098aef6a1dee1f01aa",
-      "name": "test_request_stop_current_app_posts_to_daemon",
+      "id": "22a53288eddc0e0e0bce164b47fffb87",
+      "name": "test_build_realtime_client_deployed_allocates_with_hf_token_only[None-None-DUMMY]",
       "status": "passed",
       "duration": 2
+    },
+    {
+      "id": "4d9876a279b45e6463140819a6a15ec8",
+      "name": "test_obsolete_backend_env_is_ignored_with_warning",
+      "status": "passed",
+      "duration": 1
+    },
+    {
+      "id": "52250847b3b62bb1f106a961c089f3dc",
+      "name": "test_startup_loop_rebuilds_handler_on_restart_request",
+      "status": "passed",
+      "duration": 21
+    },
+    {
+      "id": "9ed57043a9ad0be68ab6cabbeddaeec9",
+      "name": "test_session_voice_defaults_to_hf_voice",
+      "status": "passed",
+      "duration": 0
+    },
+    {
+      "id": "ed0e1c48eeeb71bd5259a62cc2183076",
+      "name": "test_local_stream_launch_waits_for_missing_hf_target_without_starting_media",
+      "status": "passed",
+      "duration": 1
+    },
+    {
+      "id": "70bb690c862676971ab22897ed1a634a",
+      "name": "test_build_realtime_client_deployed_allocates_with_hf_token_only[hf-secret-expected_header0-hf-secret]",
+      "status": "passed",
+      "duration": 1
+    },
+    {
+      "id": "c769ab86de4de70f8c8077c0cd3eaec0",
+      "name": "test_personality_routes_return_hf_voices",
+      "status": "passed",
+      "duration": 19
     }
   ],
   "flakyTests": [],
   "retryTests": [],
   "checks": [],
   "name": "Conversation App Tests",
-  "duration": 9900,
-  "createdAt": 1783000373639,
+  "duration": 4725,
+  "createdAt": 1783007503925,
   "plugin": "Awesome",
   "meta": {
-    "reportId": "4c162b6c-1431-41ab-8293-a7f1a3b421f0",
+    "reportId": "ca2e1e8a-a002-416d-be25-1badf1b73d6b",
     "singleFile": false,
     "withTestResultsLinks": true
   },
   "pluginId": "awesome",
   "pullRequestHref": "",
-  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28595349428",
+  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28603277190",
   "href": "awesome/",
-  "coverage": 69
+  "coverage": 66
 }

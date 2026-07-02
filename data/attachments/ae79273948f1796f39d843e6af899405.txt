@@ -1,0 +1,2 @@
+2026-07-02 15:51:42,672 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: done (id=c1)
+2026-07-02 15:51:42,722 WARNING reachy_mini_conversation_app.tools.background_tool_manager:244 | Cannot cancel tool done-c1-163.351038278: status is completed

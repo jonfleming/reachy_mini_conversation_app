@@ -1,1 +1,0 @@
-{"id":"4265edbc8d74c0091839ebad1fc6b805","fullName":"tests.test_openai_realtime#test_response_sender_retries_when_active_response_error_uses_type_only","name":"test_response_sender_retries_when_active_response_error_uses_type_only","status":"passed","testResultsByEnv":{"default":"ead1c671fd2b6dda188b043797cbf86c"}}
