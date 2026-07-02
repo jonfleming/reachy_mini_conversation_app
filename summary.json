@@ -1,63 +1,51 @@
 {
   "stats": {
-    "total": 272,
-    "passed": 272,
-    "new": 6
+    "total": 275,
+    "passed": 275,
+    "new": 4
   },
   "status": "passed",
   "newTests": [
     {
-      "id": "1c79825615446017c572b666fa6d7b1c",
-      "name": "test_resolve_tool_space_attaches_auth_header_for_private_space",
+      "id": "3764ed8fd95a79290d4a3c4ce70540d5",
+      "name": "test_wake_up_if_sleeping_skips_non_sleep_head_pose",
       "status": "passed",
       "duration": 1
     },
     {
-      "id": "abf29ed8405a12a8fc343f0a43655d89",
-      "name": "test_tool_spaces_add_installs_private_space_with_token",
+      "id": "67fef856ed9b77baf4430097e869ae01",
+      "name": "test_wake_up_if_sleeping_runs_wake_up_from_sleep_head_pose",
       "status": "passed",
-      "duration": 4
+      "duration": 1
     },
     {
-      "id": "9a6415c653a6db710a62b9d964073833",
-      "name": "test_resolve_tool_space_omits_auth_header_for_public_space",
+      "id": "292496b9e30c04066358f78226578848",
+      "name": "test_run_go_to_sleep_tool_uses_runtime_callback",
+      "status": "passed",
+      "duration": 3
+    },
+    {
+      "id": "26c83be9fbda47098aef6a1dee1f01aa",
+      "name": "test_request_stop_current_app_posts_to_daemon",
       "status": "passed",
       "duration": 2
-    },
-    {
-      "id": "48090f6ae4bd53024c758464e44b549b",
-      "name": "test_tool_spaces_add_private_space_without_token_hints_at_auth",
-      "status": "passed",
-      "duration": 4
-    },
-    {
-      "id": "313bf155fe64d1349a1a570df86d54c7",
-      "name": "test_tool_spaces_remove_disables_tools_in_profile",
-      "status": "passed",
-      "duration": 27
-    },
-    {
-      "id": "b179d9d2bc799d3c52596da4d0e10777",
-      "name": "test_resolve_tool_space_prefers_app_config_hf_token",
-      "status": "passed",
-      "duration": 1
     }
   ],
   "flakyTests": [],
   "retryTests": [],
   "checks": [],
   "name": "Conversation App Tests",
-  "duration": 9838,
-  "createdAt": 1782897074874,
+  "duration": 9900,
+  "createdAt": 1783000373639,
   "plugin": "Awesome",
   "meta": {
-    "reportId": "0b32bd30-9a11-4036-98c9-27bb77dd9d08",
+    "reportId": "4c162b6c-1431-41ab-8293-a7f1a3b421f0",
     "singleFile": false,
     "withTestResultsLinks": true
   },
   "pluginId": "awesome",
   "pullRequestHref": "",
-  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28506574785",
+  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28595349428",
   "href": "awesome/",
   "coverage": 69
 }

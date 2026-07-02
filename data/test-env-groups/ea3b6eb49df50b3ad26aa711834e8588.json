@@ -1,1 +1,1 @@
-{"id":"ea3b6eb49df50b3ad26aa711834e8588","fullName":"tests.test_huggingface_realtime#test_huggingface_response_cost_defaults_to_zero","name":"test_huggingface_response_cost_defaults_to_zero","status":"passed","testResultsByEnv":{"default":"c191ba1f65edafa3612223d0b381dcbd"}}
+{"id":"ea3b6eb49df50b3ad26aa711834e8588","fullName":"tests.test_huggingface_realtime#test_huggingface_response_cost_defaults_to_zero","name":"test_huggingface_response_cost_defaults_to_zero","status":"passed","testResultsByEnv":{"default":"c05e340cb74d439c4cef63e89fe7f438"}}

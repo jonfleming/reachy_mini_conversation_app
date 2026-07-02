@@ -1,0 +1,1 @@
+2026-07-02 13:52:51,810 INFO reachy_mini_conversation_app.tools.background_tool_manager:163 | Started background tool: greet (id=c1)

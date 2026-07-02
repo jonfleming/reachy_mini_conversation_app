@@ -1,1 +1,1 @@
-{"id":"861fb3f1f94a1e6b2e17c5763dfbfffe","fullName":"tests.test_config#test_resolve_app_timeout_minutes","name":"test_resolve_app_timeout_minutes[-1-None]","status":"passed","testResultsByEnv":{"default":"fce8258ecd8f041691597e819fd5ad45"}}
+{"id":"861fb3f1f94a1e6b2e17c5763dfbfffe","fullName":"tests.test_config#test_resolve_app_timeout_minutes","name":"test_resolve_app_timeout_minutes[soon-1440.0]","status":"passed","testResultsByEnv":{"default":"77d10263ee1b59cea4d5465f6ef6532d"}}

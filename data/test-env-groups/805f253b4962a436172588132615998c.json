@@ -1,1 +1,1 @@
-{"id":"805f253b4962a436172588132615998c","fullName":"tests.test_openai_realtime#test_user_speech_events_reset_idle_timer","name":"test_user_speech_events_reset_idle_timer","status":"passed","testResultsByEnv":{"default":"a4495bc9971717586a19edfb87c4264d"}}
+{"id":"805f253b4962a436172588132615998c","fullName":"tests.test_openai_realtime#test_user_speech_events_reset_idle_timer","name":"test_user_speech_events_reset_idle_timer","status":"passed","testResultsByEnv":{"default":"3a7d9e1e9653607eddf0db95dc9ae810"}}
