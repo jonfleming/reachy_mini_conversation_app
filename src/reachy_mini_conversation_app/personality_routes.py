@@ -1,20 +1,16 @@
-"""Personality and voice management, exposed over REST and/or JSON-RPC.
+"""Personality and voice management, exposed over JSON-RPC.
 
-Each operation is a transport-agnostic coroutine on :class:`PersonalityOps`.
-``mount_personality_routes`` registers them as REST endpoints (unchanged wire
-behavior); ``register_personality_methods`` registers the same ops as JSON-RPC
-methods on a :class:`~reachy_mini.apps.jsonrpc_server.JsonRpcServer`. One source
-of logic, two transports — so the local UI (JSON-RPC) and any legacy REST caller
-share identical behavior.
+Each operation lives on :class:`PersonalityOps` (transport-agnostic).
+``build_personality_ops`` constructs it and ``register_personality_methods``
+registers the ops as ``personalities.*`` / ``voices.*`` methods on a
+:class:`~reachy_mini.apps.jsonrpc_server.JsonRpcServer`, so the local UI and
+remote WebRTC clients drive personalities through one control surface.
 """
 
 from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, Callable, Optional, Awaitable, Coroutine
-
-from fastapi import Query, FastAPI, Request
-from pydantic import BaseModel
 
 from reachy_mini.io.jsonrpc import JsonRpcError
 from reachy_mini.apps.jsonrpc_server import JsonRpcServer
@@ -40,17 +36,6 @@ from .conversation_handler import ConversationHandler
 
 
 logger = logging.getLogger(__name__)
-
-
-class ApplyPayload(BaseModel):
-    """Body of the apply-personality endpoint.
-
-    Module-level: under postponed annotations, FastAPI can't resolve a
-    function-local model and silently treats it as a query param.
-    """
-
-    name: str
-    persist: bool = False
 
 
 class RouteError(Exception):
@@ -255,6 +240,8 @@ class PersonalityOps:
 
     async def voices(self) -> list[str]:
         """Return the voices available for the active backend."""
+        if self._get_loop() is None:
+            return get_available_voices()  # no session loop yet; use the static catalog
         try:
 
             async def _get_v() -> list[str]:
@@ -295,102 +282,13 @@ class PersonalityOps:
         return {"ok": True, "status": status}
 
 
-def _build_ops(
+def build_personality_ops(
     handler: ConversationHandler,
     get_loop: Callable[[], asyncio.AbstractEventLoop | None],
     **kwargs: Any,
 ) -> PersonalityOps:
+    """Build the shared personality/voice ops (register them with a transport)."""
     return PersonalityOps(handler, get_loop, **kwargs)
-
-
-def mount_personality_routes(
-    app: FastAPI,
-    handler: ConversationHandler,
-    get_loop: Callable[[], asyncio.AbstractEventLoop | None],
-    *,
-    persist_personality: Callable[[Optional[str], Optional[str]], None] | None = None,
-    get_persisted_personality: Callable[[], Optional[str]] | None = None,
-    apply_personality: Callable[[Optional[str]], Awaitable[str]] | None = None,
-    get_voices: Callable[[], Awaitable[list[str]]] | None = None,
-    get_current_voice: Callable[[], str] | None = None,
-    change_voice: Callable[[str], Awaitable[str]] | None = None,
-    api_prefix: str | None = None,
-    ops: Optional[PersonalityOps] = None,
-) -> PersonalityOps:
-    """Register personality/voice REST endpoints; returns the shared ops."""
-    from fastapi.responses import JSONResponse
-
-    api_prefix = (api_prefix or "").rstrip("/")
-    ops = ops or _build_ops(
-        handler,
-        get_loop,
-        persist_personality=persist_personality,
-        get_persisted_personality=get_persisted_personality,
-        apply_personality=apply_personality,
-        get_voices=get_voices,
-        get_current_voice=get_current_voice,
-        change_voice=change_voice,
-    )
-
-    def _err(e: RouteError) -> JSONResponse:
-        return JSONResponse({"ok": False, "error": e.reason, **e.extra}, status_code=e.status)
-
-    @app.get(f"{api_prefix}/personalities")
-    def _list() -> Any:
-        return ops.get_choices()
-
-    @app.get(f"{api_prefix}/personalities/load")
-    def _load(name: str) -> Any:
-        return ops.load(name)
-
-    @app.post(f"{api_prefix}/personalities/save")
-    async def _save(request: Request) -> Any:
-        try:
-            raw = await request.json()
-        except Exception:
-            raw = {}
-        try:
-            return ops.save(raw)
-        except RouteError as e:
-            return _err(e)
-
-    @app.delete(f"{api_prefix}/personalities")
-    def _delete(name: str) -> Any:
-        try:
-            return ops.delete(name)
-        except RouteError as e:
-            return _err(e)
-
-    @app.post(f"{api_prefix}/personalities/apply")
-    async def _apply(payload: ApplyPayload) -> Any:
-        try:
-            return await ops.apply(payload.name, bool(payload.persist))
-        except RouteError as e:
-            return _err(e)
-
-    @app.get(f"{api_prefix}/voices")
-    async def _voices() -> list[str]:
-        return await ops.voices()
-
-    @app.get(f"{api_prefix}/voices/current")
-    def _current_voice() -> dict[str, str]:
-        return ops.current_voice()
-
-    @app.post(f"{api_prefix}/voices/apply")
-    async def _apply_voice(request: Request, voice: str | None = Query(None)) -> Any:
-        v = str(voice or "")
-        if not v:
-            try:
-                raw = await request.json()
-            except Exception:
-                raw = {}
-            v = str(raw.get("voice", "") or "")
-        try:
-            return await ops.apply_voice(v)
-        except RouteError as e:
-            return _err(e)
-
-    return ops
 
 
 def register_personality_methods(rpc: JsonRpcServer, ops: PersonalityOps) -> None:

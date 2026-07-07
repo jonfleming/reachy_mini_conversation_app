@@ -8,7 +8,6 @@
  */
 
 const DEFAULT_TIMEOUT_MS = 8000;
-export const API_PREFIX = "/api/v1"; // legacy REST base (backend_config only)
 
 const RPC_URL = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/rpc`;
 
@@ -148,29 +147,7 @@ export const listVoices = () => rpcCall("voices.list");
 export const getCurrentVoice = () => rpcCall("voices.current");
 export const applyVoice = (voice) => rpcCall("voices.apply", { voice });
 
-/** backend_config is still served over REST (no JSON-RPC method for it yet). */
-export async function saveBackendConfig(payload) {
-  const response = await fetch(`${API_PREFIX}/backend_config`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const text = await response.text();
-  let json = null;
-  if (text) {
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = { raw: text };
-    }
-  }
-  if (!response.ok) {
-    const err = new Error(json?.error || response.statusText);
-    err.body = json;
-    throw err;
-  }
-  return json;
-}
+export const saveBackendConfig = (payload) => rpcCall("backend.config", payload);
 
 /** Backend error codes that need friendlier copy than the raw code. */
 const ERROR_MESSAGES = Object.freeze({
