@@ -244,10 +244,14 @@ class LocalStream:
     def _dispatch_activity(self, reason: str) -> None:
         """Fan one activity reason out to the SSE bus and JSON-RPC clients."""
         self._event_bus.publish(reason)
-        state = self._REASON_TO_TURN.get(reason)
-        if state and state != self._last_turn_state and self._rpc is not None:
-            self._last_turn_state = state
-            self._rpc.broadcast_threadsafe("conversation.turn", {"state": state})
+        if self._rpc is not None:
+            # Raw reason (the browser orb maps it exactly like the old SSE feed)...
+            self._rpc.broadcast_threadsafe("conversation.activity", {"reason": reason})
+            # ...plus a semantic turn state for clients without that mapping (mobile).
+            state = self._REASON_TO_TURN.get(reason)
+            if state and state != self._last_turn_state:
+                self._last_turn_state = state
+                self._rpc.broadcast_threadsafe("conversation.turn", {"state": state})
 
     def _emit_phase(self, phase: str, reason: Optional[str] = None) -> None:
         """Push a conversation.phase notification to JSON-RPC clients."""
