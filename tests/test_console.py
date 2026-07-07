@@ -907,3 +907,17 @@ def test_rpc_transcript_notification_broadcast() -> None:
         msg = ws.receive_json()
     assert msg["method"] == "conversation.transcript"
     assert msg["params"] == {"role": "assistant", "text": "hello there", "final": True}
+
+
+def test_rpc_personalities_and_voices_methods() -> None:
+    """personalities.* / voices.* are reachable over /rpc (same ops as REST)."""
+    app = FastAPI()
+    stream = LocalStream(MagicMock(), _rpc_robot(), settings_app=app)
+    stream._init_settings_ui_if_needed()
+    with TestClient(app).websocket_connect("/rpc") as ws:
+        ws.send_json({"jsonrpc": "2.0", "id": "1", "method": "personalities.list"})
+        r1 = ws.receive_json()
+        ws.send_json({"jsonrpc": "2.0", "id": "2", "method": "voices.list"})
+        r2 = ws.receive_json()
+    assert "choices" in r1["result"] and "current" in r1["result"]
+    assert isinstance(r2["result"], list)

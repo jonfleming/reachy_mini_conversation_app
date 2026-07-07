@@ -38,7 +38,10 @@ from reachy_mini_conversation_app.config import (
 from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_float32
 from reachy_mini_conversation_app.startup_settings import read_startup_settings, write_startup_settings
 from reachy_mini_conversation_app.tools.core_tools import initialize_tools
-from reachy_mini_conversation_app.personality_routes import mount_personality_routes
+from reachy_mini_conversation_app.personality_routes import (
+    mount_personality_routes,
+    register_personality_methods,
+)
 from reachy_mini_conversation_app.audio.startup_config import apply_audio_startup_config
 from reachy_mini_conversation_app.conversation_handler import ConversationHandler
 
@@ -726,7 +729,7 @@ class LocalStream:
             )
 
         try:
-            mount_personality_routes(
+            personality_ops = mount_personality_routes(
                 self._settings_app,
                 self.handler,
                 lambda: self._asyncio_loop,
@@ -738,6 +741,10 @@ class LocalStream:
                 change_voice=self.change_voice,
                 api_prefix=SETTINGS_API_PREFIX,
             )
+            # Expose the same personality/voice ops over JSON-RPC (personalities.*
+            # / voices.*), so a remote client drives them the same way the local
+            # UI does — one control surface.
+            register_personality_methods(rpc, personality_ops)
         except Exception:
             logger.exception("Failed to mount personality routes; the personality UI will be unavailable")
 
