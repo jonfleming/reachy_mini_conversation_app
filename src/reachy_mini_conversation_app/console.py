@@ -14,6 +14,8 @@ from pathlib import Path
 from collections.abc import Callable, AsyncGenerator
 
 from reachy_mini import ReachyMini
+from reachy_mini.io.jsonrpc import JsonRpcError
+from reachy_mini.apps.jsonrpc_server import JsonRpcServer
 from reachy_mini.media.media_manager import MediaBackend
 from reachy_mini_conversation_app.config import (
     HF_BACKEND,
@@ -199,6 +201,10 @@ class LocalStream:
         # One bus for the stream's lifetime: the conversation events route
         # closes over it, so handler rebuilds must keep publishing into it.
         self._event_bus = ConversationEventBus()
+        # JSON-RPC control surface (mounted at /rpc in _init_settings_ui_if_needed).
+        # Notifications (conversation.turn/phase) are pushed here from activity.
+        self._rpc: Optional[JsonRpcServer] = None
+        self._last_turn_state: Optional[str] = None
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -208,10 +214,42 @@ class LocalStream:
         self._attach_event_bus_to_handler()
 
     def _attach_event_bus_to_handler(self) -> None:
-        """Wire the event bus as the handler's activity observer, if supported."""
+        """Wire the activity observer: SSE bus + JSON-RPC turn notifications."""
         setter = getattr(self.handler, "set_activity_observer", None)
         if callable(setter):
-            setter(self._event_bus.publish)
+            setter(self._dispatch_activity)
+        transcript_setter = getattr(self.handler, "set_transcript_observer", None)
+        if callable(transcript_setter):
+            transcript_setter(self._dispatch_transcript)
+
+    def _dispatch_transcript(self, role: str, text: str, final: bool) -> None:
+        """Push a conversation.transcript notification to JSON-RPC clients."""
+        if self._rpc is not None:
+            self._rpc.broadcast_threadsafe(
+                "conversation.transcript",
+                {"role": role, "text": text, "final": final},
+            )
+
+    # Map coarse backend activity reasons to the orb's turn states. Transcript
+    # text is delivered separately via the transcript observer above.
+    _REASON_TO_TURN = {
+        "user_speech_started": "listening",
+        "response_created": "thinking",
+        "assistant_audio_delta": "speaking",
+    }
+
+    def _dispatch_activity(self, reason: str) -> None:
+        """Fan one activity reason out to the SSE bus and JSON-RPC clients."""
+        self._event_bus.publish(reason)
+        state = self._REASON_TO_TURN.get(reason)
+        if state and state != self._last_turn_state and self._rpc is not None:
+            self._last_turn_state = state
+            self._rpc.broadcast_threadsafe("conversation.turn", {"state": state})
+
+    def _emit_phase(self, phase: str, reason: Optional[str] = None) -> None:
+        """Push a conversation.phase notification to JSON-RPC clients."""
+        if self._rpc is not None:
+            self._rpc.broadcast_threadsafe("conversation.phase", {"phase": phase, "reason": reason})
 
     def seconds_since_activity(self) -> float:
         """Seconds since the live handler last saw conversation activity."""
@@ -581,6 +619,47 @@ class LocalStream:
         @settings_app.get(f"{SETTINGS_API_PREFIX}/status")
         def _status() -> JSONResponse:
             return JSONResponse(_status_payload())
+
+        # ── JSON-RPC control surface (/rpc) ──────────────────────────────
+        # The one wire format the daemon relays to remote WebRTC clients and
+        # the local browser UI both use. Methods mirror the REST surface;
+        # notifications (conversation.turn/phase) are pushed from activity.
+        rpc = JsonRpcServer()
+
+        # SDK isn't marked py.typed, so mypy sees rpc.method as untyped; safe here.
+        @rpc.method("conversation.status")  # type: ignore[misc]
+        def _rpc_status(_params: dict[str, object]) -> dict[str, object]:
+            return _status_payload()
+
+        @rpc.method("conversation.say")  # type: ignore[misc]
+        async def _rpc_say(params: dict[str, object]) -> dict[str, object]:
+            text = str(params.get("text", "")).strip()
+            if not text:
+                raise JsonRpcError("say requires 'text'", reason="invalid_params", code=-32602)
+            if not self.handler._is_connected():
+                raise JsonRpcError("no active session", reason="not_running")
+            self.clear_audio_queue()  # barge in if mid-utterance
+            await self.handler.say(text)
+            return {"ok": True}
+
+        @rpc.method("conversation.interrupt")  # type: ignore[misc]
+        def _rpc_interrupt(_params: dict[str, object]) -> dict[str, object]:
+            if not self.handler._is_connected():
+                raise JsonRpcError("no active session", reason="not_running")
+            self.clear_audio_queue()
+            self._last_turn_state = "listening"
+            rpc.broadcast_threadsafe("conversation.turn", {"state": "listening", "reason": "interrupted"})
+            return {"ok": True}
+
+        @rpc.method("conversation.mic")  # type: ignore[misc]
+        def _rpc_mic(params: dict[str, object]) -> dict[str, object]:
+            if "muted" in params:
+                self._mic_muted = bool(params["muted"])
+                logger.info("Microphone %s via /rpc", "muted" if self._mic_muted else "unmuted")
+            return {"muted": self._mic_muted}
+
+        rpc.mount(settings_app)
+        self._rpc = rpc
 
         event_bus = self._event_bus
 

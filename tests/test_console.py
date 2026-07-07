@@ -841,3 +841,69 @@ def test_local_stream_launch_waits_for_missing_hf_target_without_starting_media(
     init_settings_ui.assert_called_once()
     media.start_recording.assert_not_called()
     media.start_playing.assert_not_called()
+
+
+def _rpc_robot() -> SimpleNamespace:
+    """A robot mock whose audio pipeline supports clear_audio_queue()."""
+    audio = SimpleNamespace(clear_player=MagicMock(), clear_output_buffer=MagicMock())
+    return SimpleNamespace(media=SimpleNamespace(audio=audio))
+
+
+def test_rpc_status_and_mic_over_websocket() -> None:
+    """conversation.status/mic are reachable over the /rpc JSON-RPC WebSocket."""
+    app = FastAPI()
+    stream = LocalStream(MagicMock(), _rpc_robot(), settings_app=app)
+    stream._init_settings_ui_if_needed()
+    client = TestClient(app)
+    with client.websocket_connect("/rpc") as ws:
+        ws.send_json({"jsonrpc": "2.0", "id": "1", "method": "conversation.status"})
+        resp = ws.receive_json()
+        assert resp["id"] == "1"
+        assert "result" in resp
+
+        ws.send_json({"jsonrpc": "2.0", "id": "2", "method": "conversation.mic", "params": {"muted": True}})
+        resp = ws.receive_json()
+        assert resp["result"] == {"muted": True}
+    assert stream._mic_muted is True
+
+
+def test_rpc_interrupt_broadcasts_turn_listening() -> None:
+    """conversation.interrupt clears playback and pushes a turn:listening event."""
+    handler = MagicMock()
+    handler.output_queue = asyncio.Queue()
+    handler._is_connected.return_value = True
+    app = FastAPI()
+    stream = LocalStream(handler, _rpc_robot(), settings_app=app)
+    stream._init_settings_ui_if_needed()
+    with TestClient(app).websocket_connect("/rpc") as ws:
+        ws.send_json({"jsonrpc": "2.0", "id": "1", "method": "conversation.interrupt"})
+        msgs = [ws.receive_json(), ws.receive_json()]
+    results = [m for m in msgs if "result" in m]
+    notes = [m for m in msgs if m.get("method") == "conversation.turn"]
+    assert results and results[0]["result"] == {"ok": True}
+    assert notes and notes[0]["params"] == {"state": "listening", "reason": "interrupted"}
+
+
+def test_rpc_say_requires_active_session() -> None:
+    """conversation.say fails with not_running when no session is connected."""
+    handler = MagicMock()
+    handler._is_connected.return_value = False
+    app = FastAPI()
+    stream = LocalStream(handler, _rpc_robot(), settings_app=app)
+    stream._init_settings_ui_if_needed()
+    with TestClient(app).websocket_connect("/rpc") as ws:
+        ws.send_json({"jsonrpc": "2.0", "id": "1", "method": "conversation.say", "params": {"text": "hi"}})
+        resp = ws.receive_json()
+    assert resp["error"]["data"]["reason"] == "not_running"
+
+
+def test_rpc_transcript_notification_broadcast() -> None:
+    """The handler's transcript observer pushes conversation.transcript events."""
+    app = FastAPI()
+    stream = LocalStream(MagicMock(), _rpc_robot(), settings_app=app)
+    stream._init_settings_ui_if_needed()
+    with TestClient(app).websocket_connect("/rpc") as ws:
+        stream._dispatch_transcript("assistant", "hello there", True)
+        msg = ws.receive_json()
+    assert msg["method"] == "conversation.transcript"
+    assert msg["params"] == {"role": "assistant", "text": "hello there", "final": True}
