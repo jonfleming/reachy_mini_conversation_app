@@ -9,17 +9,17 @@
   "retryTests": [],
   "checks": [],
   "name": "Conversation App Tests",
-  "duration": 4769,
-  "createdAt": 1783081336475,
+  "duration": 4639,
+  "createdAt": 1783431140847,
   "plugin": "Awesome",
   "meta": {
-    "reportId": "f8875466-995f-4684-9dad-45fe73dfc23f",
+    "reportId": "780f990d-f1d7-4c5d-9556-68e4ad25f2c6",
     "singleFile": false,
     "withTestResultsLinks": true
   },
   "pluginId": "awesome",
   "pullRequestHref": "",
-  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28660206855",
+  "jobHref": "https://github.com/pollen-robotics/reachy_mini_conversation_app/actions/runs/28870128512",
   "href": "awesome/",
   "coverage": 66
 }

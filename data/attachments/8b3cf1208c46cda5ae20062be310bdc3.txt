@@ -1,2 +1,0 @@
-2026-07-03 12:22:16,289 INFO reachy_mini_conversation_app.tools.camera:35 | Tool call: camera question=What color is this?
-2026-07-03 12:22:16,289 ERROR reachy_mini_conversation_app.tools.camera:38 | Camera is disabled
