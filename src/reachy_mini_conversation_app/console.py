@@ -8,9 +8,11 @@ import os
 import time
 import asyncio
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 from pathlib import Path
 from collections.abc import Callable
+
+import numpy as np
 
 from reachy_mini import ReachyMini
 from reachy_mini.io.jsonrpc import JsonRpcError
@@ -133,6 +135,8 @@ class LocalStream:
         # here from activity + transcripts. Survives handler rebuilds (mounted once).
         self._rpc: Optional[JsonRpcServer] = None
         self._last_turn_state: Optional[str] = None
+        # Per-role throttle timestamps for conversation.level (orb audio meter).
+        self._last_level_emit: dict[str, float] = {}
         self._install_handler(handler)
 
     def _install_handler(self, handler: ConversationHandler) -> None:
@@ -157,6 +161,29 @@ class LocalStream:
                 "conversation.transcript",
                 {"role": role, "text": text, "final": final},
             )
+
+    # Audio level meter for the client orb. RMS is scaled into a visible 0..1
+    # range and capped to ~15 Hz so it stays light on the DataChannel.
+    _LEVEL_INTERVAL_S = 1.0 / 15.0
+    _LEVEL_GAIN = 6.0
+
+    def _emit_level(self, role: str, frame: Any) -> None:
+        """Emit a throttled conversation.level (RMS) for ``role`` (user/assistant)."""
+        if self._rpc is None:
+            return
+        now = time.monotonic()
+        if now - self._last_level_emit.get(role, 0.0) < self._LEVEL_INTERVAL_S:
+            return
+        self._last_level_emit[role] = now
+        try:
+            samples = audio_to_float32(frame)
+            rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
+        except Exception:
+            return
+        level = max(0.0, min(1.0, rms * self._LEVEL_GAIN))
+        self._rpc.broadcast_threadsafe(
+            "conversation.level", {"role": role, "rms": round(level, 3)}
+        )
 
     # Map coarse backend activity reasons to the orb's turn states. Transcript
     # text is delivered separately via the transcript observer above.
@@ -835,6 +862,7 @@ class LocalStream:
             audio_frame = self._robot.media.get_audio_sample()
             if audio_frame is not None and not self._mic_muted:
                 await self.handler.receive((input_sample_rate, audio_frame))
+                self._emit_level("user", audio_frame)
             await asyncio.sleep(0)  # avoid busy loop
 
     async def play_loop(self) -> None:
@@ -876,6 +904,7 @@ class LocalStream:
                 audio_frame = audio_to_float32(audio_data)
 
                 self._robot.media.push_audio_sample(audio_frame)
+                self._emit_level("assistant", audio_frame)
 
             else:
                 logger.debug("Ignoring output type=%s", type(handler_output).__name__)
