@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional, Awaitable
 from fastapi import Query, FastAPI, Request
 from pydantic import BaseModel
 
+from . import personality_viber
 from .config import (
     LOCKED_PROFILE,
     config,
@@ -182,6 +183,44 @@ def mount_personality_routes(
             return {"ok": True, "value": value, "choices": choices}
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)  # type: ignore
+
+    @app.post(f"{api_prefix}/personalities/vibe/generate")
+    async def _vibe_generate(request: Request) -> Any:
+        """Generate a personality draft from a plain-language description (no persistence)."""
+        try:
+            raw = await request.json()
+        except Exception:
+            raw = {}
+        description = str(raw.get("description", "") or "").strip()
+        if not description:
+            return JSONResponse({"ok": False, "error": "empty_description"}, status_code=400)  # type: ignore
+        if not personality_viber.has_token():
+            return JSONResponse({"ok": False, "error": "no_hf_token"}, status_code=400)  # type: ignore
+        try:
+            draft = await asyncio.to_thread(personality_viber.generate_personality, description)
+        except personality_viber.VibeError as e:
+            return JSONResponse({"ok": False, "error": "vibe_failed", "detail": str(e)}, status_code=502)  # type: ignore
+        except Exception as e:
+            logger.exception("vibe generate failed")
+            return JSONResponse({"ok": False, "error": "vibe_failed", "detail": str(e)}, status_code=502)  # type: ignore
+        return {"ok": True, "draft": draft.to_dict()}
+
+    @app.post(f"{api_prefix}/personalities/vibe/commit")
+    async def _vibe_commit(request: Request) -> Any:
+        """Persist a (possibly user-edited) draft: write behaviors, then the profile."""
+        try:
+            raw = await request.json()
+        except Exception:
+            raw = {}
+        draft = raw.get("draft") if isinstance(raw.get("draft"), dict) else raw
+        try:
+            value = await asyncio.to_thread(personality_viber.commit_draft, draft)
+        except personality_viber.VibeError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)  # type: ignore
+        except Exception as e:
+            logger.exception("vibe commit failed")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)  # type: ignore
+        return {"ok": True, "value": value, "choices": [DEFAULT_OPTION, *list_personalities()]}
 
     @app.delete(f"{api_prefix}/personalities")
     def _delete(name: str) -> dict:  # type: ignore

@@ -8,6 +8,8 @@ import {
   loadPersonality,
   savePersonality,
   untilReady,
+  vibeCommit,
+  vibeGenerate,
 } from "../api.js";
 import {
   AVATAR_BY_PROFILE,
@@ -17,6 +19,7 @@ import {
 } from "../constants.js";
 import { $, h, prettifyProfileName } from "../ui.js";
 import { openProfileModal } from "../components/profile-modal.js";
+import { openVibeInputModal, openVibeReviewModal } from "../components/vibe-modal.js";
 import { confirmDialog } from "../components/confirm-dialog.js";
 import { setPendingApply } from "../pending-apply.js";
 import { setPersonality } from "../personality-badge.js";
@@ -83,6 +86,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
         })
       );
     }
+    grid.appendChild(buildVibeCard({ onClick: handleVibeClick }));
     grid.appendChild(buildCustomCard({ onClick: handleCustomClick }));
 
     if (lockedTo) {
@@ -144,6 +148,55 @@ export async function mountHomeView({ outlet, signal, navigate }) {
     } catch (error) {
       if (signal.aborted) return;
       status.textContent = `Failed to create profile: ${describeError(error)}`;
+      status.classList.add("is-error");
+      return;
+    }
+    setPersonality(newName);
+    setPendingApply({ name: newName, promise: applyPersonality(newName, { persist: false }) });
+    navigate(ROUTES.TALK);
+  }
+
+  async function handleVibeClick() {
+    const description = await openVibeInputModal({ signal });
+    if (!description || signal.aborted) return;
+
+    status.classList.remove("is-warning", "is-error");
+    status.textContent = "Generating your personality… this takes about a minute.";
+    let draft;
+    try {
+      const result = await vibeGenerate(description);
+      draft = result?.draft;
+    } catch (error) {
+      if (signal.aborted) return;
+      status.textContent = `Could not generate: ${describeError(error)}`;
+      status.classList.add("is-error");
+      return;
+    }
+    if (!draft || signal.aborted) return;
+
+    // Available-tools palette so the review can offer the existing-tools checklist.
+    let availableTools = [];
+    try {
+      const defaults = await loadPersonality(BUILT_IN_DEFAULT_OPTION);
+      availableTools = defaults?.available_tools || [];
+    } catch {
+      // Non-fatal: the review just won't show the existing-tools checklist.
+    }
+    if (signal.aborted) return;
+
+    const reviewed = await openVibeReviewModal({ draft, availableTools, signal });
+    if (!reviewed || signal.aborted) return;
+
+    status.classList.remove("is-warning", "is-error");
+    status.textContent = `Creating "${reviewed.name}"…`;
+    let newName;
+    try {
+      const saveResult = await vibeCommit(reviewed);
+      if (signal.aborted) return;
+      newName = saveResult?.value || `user_personalities/${reviewed.name}`;
+    } catch (error) {
+      if (signal.aborted) return;
+      status.textContent = `Failed to create: ${describeError(error)}`;
       status.classList.add("is-error");
       return;
     }
@@ -304,6 +357,22 @@ function checkBadge() {
       <polyline points="20 6 9 17 4 12"/>
     </svg>`;
   return badge;
+}
+
+function buildVibeCard({ onClick }) {
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "personality-card personality-card--vibe",
+      role: "listitem",
+      "aria-label": "Vibe-create a personality from a description",
+      onClick,
+    },
+    h("span", { class: "personality-card__plus", "aria-hidden": "true" }, "✨"),
+    h("span", { class: "personality-card__name" }, "Vibe-create"),
+    h("span", { class: "personality-card__hint" }, "Just describe it")
+  );
 }
 
 function buildCustomCard({ onClick }) {

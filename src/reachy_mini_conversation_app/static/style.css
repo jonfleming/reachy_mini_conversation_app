@@ -745,6 +745,59 @@ button {
   font-size: 0.78rem;
 }
 
+/* Vibe-create card: same dashed shell as custom, tinted toward the accent. */
+.personality-card--vibe {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+  border: 1px dashed var(--accent);
+}
+
+.personality-card--vibe:hover:not(:disabled) {
+  background: var(--bg-elev);
+  border-color: var(--accent);
+}
+
+.personality-card--vibe .personality-card__plus {
+  color: var(--accent);
+}
+
+/* Read-only list of the moves the viber invented, in the review modal. */
+.modal__behaviors {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.modal__behaviors-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modal__behavior {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modal__behavior-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.modal__behavior-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 /* 5. Talk view - orb wrapper, caption, back button */
 
 /* flex: 1 claims the outlet's remaining height so justify-content: center

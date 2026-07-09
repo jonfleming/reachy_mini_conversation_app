@@ -306,6 +306,13 @@ class Config:
     REALTIME_TRANSCRIPTION_LANGUAGE = _normalize_transcription_language(os.getenv(REALTIME_TRANSCRIPTION_LANGUAGE_ENV))
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
 
+    # "Vibe-create a personality": the LLM (via HF Inference Providers) that turns a
+    # plain-language description into a personality + rmscript behaviors. Reuses HF_TOKEN.
+    VIBE_MODEL = os.getenv("REACHY_MINI_VIBE_MODEL", "zai-org/GLM-5.2")
+    # "zai-org" (Z.ai first-party) gives steadier ~1 min latency than "auto", whose
+    # routing swings wildly (~15-90s). Override with REACHY_MINI_VIBE_PROVIDER.
+    VIBE_PROVIDER = os.getenv("REACHY_MINI_VIBE_PROVIDER", "zai-org")
+
     logger.debug(
         "HF mode: %s, HF session URL set: %s, HF direct URL set: %s",
         HF_REALTIME_CONNECTION_MODE,

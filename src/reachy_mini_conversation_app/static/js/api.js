@@ -76,6 +76,16 @@ export const applyPersonality = (name, { persist = false } = {}) =>
 export const deletePersonality = (name) =>
   request("DELETE", `${API_PREFIX}/personalities?name=${encodeURIComponent(name)}`);
 
+// Vibe-create: generation is a multi-second LLM call, so it needs a long timeout.
+const VIBE_TIMEOUT_MS = 120000;
+export const vibeGenerate = (description) =>
+  request("POST", `${API_PREFIX}/personalities/vibe/generate`, {
+    body: { description },
+    timeoutMs: VIBE_TIMEOUT_MS,
+  });
+export const vibeCommit = (draft) =>
+  request("POST", `${API_PREFIX}/personalities/vibe/commit`, { body: { draft } });
+
 export const getMicState = () => request("GET", `${API_PREFIX}/mic`);
 export const setMicMuted = (muted) => request("POST", `${API_PREFIX}/mic`, { body: { muted } });
 
@@ -130,6 +140,9 @@ const ERROR_MESSAGES = Object.freeze({
   profile_in_use: "This personality is active or set to load at startup. Switch to another one first.",
   not_deletable: "This personality can't be deleted.",
   loop_unavailable: "Reachy is still starting up. Try again in a moment.",
+  no_hf_token: "Add a Hugging Face token (HF_TOKEN) in Settings to vibe-create personalities.",
+  vibe_failed: "The personality generator had trouble. Try rephrasing your description.",
+  empty_description: "Describe the personality you'd like first.",
 });
 
 /** Map a thrown error to user-facing copy, falling back to its raw message. */

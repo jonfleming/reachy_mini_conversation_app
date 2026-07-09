@@ -67,6 +67,7 @@ where = ["src"]
 reachy_mini_conversation_app = [
   "static/**/*",
   ".env.example",
+  "rmscript_reference.md",
 ]
 reachy_talk_data = [
   "profiles/**/*.txt",
