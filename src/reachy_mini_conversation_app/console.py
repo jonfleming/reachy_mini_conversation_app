@@ -185,12 +185,20 @@ class LocalStream:
             "conversation.level", {"role": role, "rms": round(level, 3)}
         )
 
-    # Map coarse backend activity reasons to the orb's turn states. Transcript
-    # text is delivered separately via the transcript observer above.
+    # Map backend activity reasons to the orb's turn states (mirrors the old
+    # browser orb's mapActivityToState so the orb reliably reaches listening/
+    # thinking/speaking across the reasons the HF handler actually emits).
+    # Transcript text is delivered separately via the transcript observer.
     _REASON_TO_TURN = {
         "user_speech_started": "listening",
+        "user_transcription_delta": "listening",
+        "user_speech_stopped": "thinking",
+        "user_transcription_completed": "thinking",
         "response_created": "thinking",
+        "tool_call_received": "thinking",
+        "tool_result_ready": "thinking",
         "assistant_audio_delta": "speaking",
+        "assistant_transcript_done": "ready",
     }
 
     def _dispatch_activity(self, reason: str) -> None:
