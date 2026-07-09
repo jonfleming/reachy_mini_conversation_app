@@ -37,6 +37,92 @@ function showError(errorBox, message) {
   errorBox.classList.add("is-visible");
 }
 
+// The bar aims to reach 100% over roughly this long, matching typical generation latency.
+const PROGRESS_TARGET_MS = 80000;
+
+/**
+ * Show a non-dismissable "generating" modal with a jagged progress bar that
+ * creeps toward 100% over ~80s. Returns a controller:
+ *   - finish(): fill to 100% smoothly, then remove the modal (await it).
+ *   - close():  remove the modal immediately (on error/abort).
+ *
+ * The bar caps just short of 100% until finish() is called, so it never claims
+ * completion before the real draft has arrived — even if generation runs long.
+ */
+export function openVibeProgressModal({ signal } = {}) {
+  const fill = h("div", { class: "vibe-progress__fill" });
+  const label = h("span", { class: "vibe-progress__pct" }, "0%");
+  const track = h(
+    "div",
+    { class: "vibe-progress__track", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": "0" },
+    fill
+  );
+  const dialog = h(
+    "div",
+    { class: "modal modal--progress", role: "dialog", "aria-modal": "true", "aria-labelledby": "vibe-progress-title" },
+    h(
+      "header",
+      { class: "modal__header" },
+      h("h2", { id: "vibe-progress-title", class: "modal__title" }, "Creating your personality…"),
+      h("p", { class: "modal__subtitle" }, "Reachy is dreaming up a character and inventing its moves.")
+    ),
+    h("div", { class: "vibe-progress" }, track, label)
+  );
+  const overlay = h("div", { class: "modal-overlay", role: "presentation" });
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  let percent = 0;
+  let timer = null;
+
+  function render() {
+    const shown = Math.min(100, Math.round(percent));
+    fill.style.width = `${shown}%`;
+    label.textContent = `${shown}%`;
+    track.setAttribute("aria-valuenow", String(shown));
+  }
+
+  // Self-scheduling tick with a randomized cadence and jittered step, so the
+  // bar advances in visibly uneven jerks rather than a smooth glide.
+  function tick() {
+    const dt = 240 + Math.random() * 420; // 0.24–0.66s between updates
+    const base = (dt / PROGRESS_TARGET_MS) * 100; // even-pace share for this slice
+    // ~15% of ticks nearly stall; the rest run 0.4×–2.2× the even pace.
+    const jitter = Math.random() < 0.15 ? Math.random() * 0.25 : 0.4 + Math.random() * 1.8;
+    percent = Math.min(percent + base * jitter, 95);
+    render();
+    timer = setTimeout(tick, dt);
+  }
+
+  function stop() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  }
+  function close() {
+    stop();
+    signal?.removeEventListener("abort", close);
+    overlay.remove();
+  }
+  signal?.addEventListener("abort", close);
+  timer = setTimeout(tick, 180);
+
+  return {
+    close,
+    /** Run the bar to 100%, hold briefly so it reads as done, then remove the modal. */
+    finish() {
+      stop();
+      return new Promise((resolve) => {
+        percent = 100;
+        render();
+        setTimeout(() => {
+          close();
+          resolve();
+        }, 450);
+      });
+    },
+  };
+}
+
 /** Ask the user to describe the personality. Resolves to the text, or null if cancelled. */
 export function openVibeInputModal({ signal } = {}) {
   return new Promise((resolve) => {

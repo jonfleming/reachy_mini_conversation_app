@@ -798,6 +798,44 @@ button {
   color: var(--text-muted);
 }
 
+/* Jagged progress bar shown while a vibe personality is generating. */
+.modal--progress {
+  text-align: center;
+}
+
+.vibe-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.vibe-progress__track {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.vibe-progress__fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  /* Short transition smooths each jerk without hiding the uneven cadence. */
+  transition: width 140ms linear;
+}
+
+.vibe-progress__pct {
+  min-width: 3.2em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
 /* 5. Talk view - orb wrapper, caption, back button */
 
 /* flex: 1 claims the outlet's remaining height so justify-content: center

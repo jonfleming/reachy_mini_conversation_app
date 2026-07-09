@@ -19,7 +19,7 @@ import {
 } from "../constants.js";
 import { $, h, prettifyProfileName } from "../ui.js";
 import { openProfileModal } from "../components/profile-modal.js";
-import { openVibeInputModal, openVibeReviewModal } from "../components/vibe-modal.js";
+import { openVibeInputModal, openVibeProgressModal, openVibeReviewModal } from "../components/vibe-modal.js";
 import { confirmDialog } from "../components/confirm-dialog.js";
 import { setPendingApply } from "../pending-apply.js";
 import { setPersonality } from "../personality-badge.js";
@@ -161,17 +161,21 @@ export async function mountHomeView({ outlet, signal, navigate }) {
     if (!description || signal.aborted) return;
 
     status.classList.remove("is-warning", "is-error");
-    status.textContent = "Generating your personality… this takes about a minute.";
+    status.textContent = "";
+    const progress = openVibeProgressModal({ signal });
     let draft;
     try {
       const result = await vibeGenerate(description);
       draft = result?.draft;
     } catch (error) {
+      progress.close();
       if (signal.aborted) return;
       status.textContent = `Could not generate: ${describeError(error)}`;
       status.classList.add("is-error");
       return;
     }
+    // Let the bar run to 100% before we swap in the review modal.
+    await progress.finish();
     if (!draft || signal.aborted) return;
 
     // Available-tools palette so the review can offer the existing-tools checklist.
