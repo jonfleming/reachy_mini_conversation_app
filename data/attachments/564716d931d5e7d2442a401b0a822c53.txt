@@ -1,0 +1,8 @@
+2026-07-09 16:11:52,429 INFO reachy_mini_conversation_app.tool_spaces:435 | Installed Space tool source: example/search-tool
+2026-07-09 16:11:52,430 INFO reachy_mini_conversation_app.tool_spaces:436 | Manifest: external_content/installed_tool_spaces.json
+2026-07-09 16:11:52,430 INFO reachy_mini_conversation_app.tool_spaces:437 | example/search-tool (example_search_tool)
+  MCP endpoint: https://example-search-tool.hf.space/gradio_api/mcp/
+  Tools:
+    - example_search_tool__search_web
+2026-07-09 16:11:52,430 INFO reachy_mini_conversation_app.tool_spaces:440 | Tools installed. Add tool IDs to a profile's tools.txt to enable them.
+2026-07-09 16:11:52,432 ERROR reachy_mini_conversation_app.tool_spaces:411 | Cannot install 'example/search_tool': its local alias 'example_search_tool' conflicts with already-installed 'example/search-tool'. Rename one Space on Hugging Face to get a distinct alias.

@@ -1,0 +1,7 @@
+2026-07-09 16:11:52,384 INFO reachy_mini_conversation_app.tool_spaces:435 | Installed Space tool source: example/private-space
+2026-07-09 16:11:52,385 INFO reachy_mini_conversation_app.tool_spaces:436 | Manifest: external_content/installed_tool_spaces.json
+2026-07-09 16:11:52,385 INFO reachy_mini_conversation_app.tool_spaces:437 | example/private-space (example_private_space)
+  MCP endpoint: https://example-private-space.hf.space/gradio_api/mcp/
+  Tools:
+    - example_private_space__search_tool_search_web
+2026-07-09 16:11:52,385 INFO reachy_mini_conversation_app.tool_spaces:440 | Tools installed. Add tool IDs to a profile's tools.txt to enable them.

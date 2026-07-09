@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_545d0ca0fcabeb60_memory_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.14.3">coverage.py v7.14.3</a>,
-            created at 2026-07-07 13:32 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.0">coverage.py v7.15.0</a>,
+            created at 2026-07-09 16:11 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -89,7 +89,7 @@
     <p class="pln"><span class="n"><a id="t7" href="#t7">7</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t8" href="#t8">8</a></span><span class="t"><span class="key">from</span> <span class="nam">__future__</span> <span class="key">import</span> <span class="nam">annotations</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t9" href="#t9">9</a></span><span class="t"><span class="key">import</span> <span class="nam">re</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="key">from</span> <span class="nam">typing</span> <span class="key">import</span> <span class="nam">TYPE_CHECKING</span><span class="op">,</span> <span class="nam">Any</span><span class="op">,</span> <span class="nam">Mapping</span><span class="op">,</span> <span class="nam">AsyncIterator</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t10" href="#t10">10</a></span><span class="t"><span class="key">from</span> <span class="nam">typing</span> <span class="key">import</span> <span class="nam">TYPE_CHECKING</span><span class="op">,</span> <span class="nam">Any</span><span class="op">,</span> <span class="nam">Mapping</span><span class="op">,</span> <span class="nam">Sequence</span><span class="op">,</span> <span class="nam">AsyncIterator</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t11" href="#t11">11</a></span><span class="t"><span class="key">from</span> <span class="nam">datetime</span> <span class="key">import</span> <span class="nam">timedelta</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="key">from</span> <span class="nam">contextlib</span> <span class="key">import</span> <span class="nam">asynccontextmanager</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t"><span class="key">from</span> <span class="nam">dataclasses</span> <span class="key">import</span> <span class="nam">field</span><span class="op">,</span> <span class="nam">dataclass</span>&nbsp;</span><span class="r"></span></p>
@@ -355,10 +355,10 @@
     <p class="run"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t"><span class="key">class</span> <span class="nam">RemoteMcpToolClient</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">    <span class="str">"""Minimal async client for allowlisted remote MCP tool servers."""</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">    <span class="key">def</span> <span class="nam">__init__</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">server</span><span class="op">:</span> <span class="nam">RemoteMcpServerConfig</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">    <span class="key">def</span> <span class="nam">__init__</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">server</span><span class="op">:</span> <span class="nam">RemoteMcpServerConfig</span><span class="op">,</span> <span class="nam">known_tools</span><span class="op">:</span> <span class="nam">Sequence</span><span class="op">[</span><span class="nam">RemoteToolSpec</span><span class="op">]</span> <span class="op">=</span> <span class="op">(</span><span class="op">)</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">        <span class="str">"""Store one allowlisted server configuration and an in-memory tool cache."""</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">server</span> <span class="op">=</span> <span class="nam">server</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_tool_index</span><span class="op">:</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">RemoteToolSpec</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_tool_index</span> <span class="op">=</span> <span class="nam">_index_remote_tools</span><span class="op">(</span><span class="nam">list</span><span class="op">(</span><span class="nam">known_tools</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">list_tool_specs</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="nam">list</span><span class="op">[</span><span class="nam">RemoteToolSpec</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t282" href="#t282">282</a></span><span class="t">        <span class="str">"""Discover remote tools and translate them into app-facing specs."""</span>&nbsp;</span><span class="r"></span></p>
@@ -479,8 +479,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_545d0ca0fcabeb60_memory_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.14.3">coverage.py v7.14.3</a>,
-            created at 2026-07-07 13:32 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.15.0">coverage.py v7.15.0</a>,
+            created at 2026-07-09 16:11 +0000
         </p>
     </div>
 </footer>
