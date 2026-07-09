@@ -43,12 +43,13 @@ def _dump(items: Any) -> List[Dict[str, Any]]:
     return [{"line": i.line, "column": i.column, "message": i.message} for i in items]
 
 
-def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
+def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler, api_prefix: str | None = None) -> None:
     """Register shared rmscript tool library endpoints on a FastAPI app.
 
     Preview runs the tool in a background task; ``preview`` tracks that task.
     The movement queue is thread-safe, so the task drives the robot directly.
     """
+    api_prefix = (api_prefix or "").rstrip("/")
     # In-flight preview task.
     preview: Dict[str, Any] = {"task": None}
 
@@ -75,7 +76,7 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
             if preview["task"] is asyncio.current_task():
                 preview["task"] = None
 
-    @app.post("/rmscript/preview")
+    @app.post(f"{api_prefix}/rmscript/preview")
     async def _preview(request: Request) -> Any:
         source = str((await request.json()).get("source", ""))
         tool, duration = prepare_preview(source)
@@ -86,13 +87,13 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
         preview["task"] = asyncio.create_task(_run_preview(tool))
         return {"ok": True, "duration": duration}
 
-    @app.post("/rmscript/abort")
+    @app.post(f"{api_prefix}/rmscript/abort")
     async def _abort() -> dict:  # type: ignore
         await _cancel_task()
         handler.deps.movement_manager.clear_move_queue()
         return {"ok": True}
 
-    @app.post("/rmscript/verify")
+    @app.post(f"{api_prefix}/rmscript/verify")
     async def _verify(request: Request) -> dict:  # type: ignore
         raw = await request.json()
         result = compile_script(str(raw.get("source", "")))
@@ -104,15 +105,15 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
             "warnings": _dump(result.warnings),
         }
 
-    @app.get("/rmscript/tools")
+    @app.get(f"{api_prefix}/rmscript/tools")
     def _list() -> dict:  # type: ignore
         return {"tools": list_rmscript_tools()}
 
-    @app.get("/rmscript/tools/{name}")
+    @app.get(f"{api_prefix}/rmscript/tools/{{name}}")
     def _get(name: str) -> dict:  # type: ignore
         return {"name": name, "source": read_rmscript_tool(name)}
 
-    @app.post("/rmscript/tools/{name}")
+    @app.post(f"{api_prefix}/rmscript/tools/{{name}}")
     async def _save(name: str, request: Request) -> Any:
         raw = await request.json()
         source = str(raw.get("source", ""))
@@ -122,7 +123,7 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
         saved = write_rmscript_tool(name, source)
         return {"ok": True, "name": saved, "tools": list_rmscript_tools()}
 
-    @app.delete("/rmscript/tools/{name}")
+    @app.delete(f"{api_prefix}/rmscript/tools/{{name}}")
     def _delete(name: str) -> dict:  # type: ignore
         deleted = delete_rmscript_tool(name)
         return {"ok": deleted, "tools": list_rmscript_tools()}
@@ -131,11 +132,11 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
         """User and built-in sound names available to `play`."""
         return {"user": list_user_sounds(), "builtin": list_builtin_sounds()}
 
-    @app.get("/rmscript/sounds")
+    @app.get(f"{api_prefix}/rmscript/sounds")
     def _list_sounds() -> dict:  # type: ignore
         return _sounds_payload()
 
-    @app.post("/rmscript/sounds")
+    @app.post(f"{api_prefix}/rmscript/sounds")
     async def _upload_sound(file: UploadFile = File(...)) -> Any:
         # Read with a cap so an oversized upload never fully lands in memory.
         chunks: List[bytes] = []
@@ -154,7 +155,7 @@ def mount_rmscript_routes(app: FastAPI, handler: ConversationHandler) -> None:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         return {"ok": True, "name": name, **_sounds_payload()}
 
-    @app.delete("/rmscript/sounds/{name}")
+    @app.delete(f"{api_prefix}/rmscript/sounds/{{name}}")
     def _delete_sound(name: str) -> dict:  # type: ignore
         deleted = delete_sound(name)
         return {"ok": deleted, **_sounds_payload()}

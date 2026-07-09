@@ -7,13 +7,14 @@ import asyncio
 import logging
 import argparse
 import threading
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from pathlib import Path
 from collections.abc import Callable, Awaitable
 
 from fastapi import FastAPI, Request, Response
 
 from reachy_mini import ReachyMini, ReachyMiniApp
+from reachy_mini_conversation_app import app_lifecycle
 from reachy_mini_conversation_app.utils import (
     parse_args,
     setup_logger,
@@ -30,8 +31,9 @@ def _start_inactivity_timeout_thread(
     stream_manager: LocalStream,
     logger: logging.Logger,
     app_stop_event: threading.Event | None,
+    go_to_sleep: Callable[[], dict[str, Any]] | None = None,
 ) -> threading.Thread:
-    """Start a daemon that closes the app after `timeout_minutes` without activity."""
+    """Start a daemon that puts the app to sleep after inactivity."""
     timeout_seconds = timeout_minutes * 60.0
 
     def poll_inactivity_timeout() -> None:
@@ -39,11 +41,18 @@ def _start_inactivity_timeout_thread(
         while app_stop_event is None or not app_stop_event.is_set():
             elapsed = stream_manager.seconds_since_activity()
             if elapsed >= timeout_seconds:
-                logger.info("No activity for %.1f minutes; closing conversation app.", elapsed / 60.0)
+                logger.info("No activity for %.1f minutes; going to sleep.", elapsed / 60.0)
                 try:
-                    stream_manager.close()
+                    if go_to_sleep is not None:
+                        go_to_sleep()
+                    else:
+                        stream_manager.close()
                 except Exception as e:
-                    logger.error("Error while closing stream manager after inactivity timeout: %s", e)
+                    logger.error("Error while going to sleep after inactivity timeout: %s", e)
+                    try:
+                        stream_manager.close()
+                    except Exception as close_error:
+                        logger.error("Error while closing stream manager after inactivity timeout: %s", close_error)
                 return
             time.sleep(1.0)
 
@@ -78,11 +87,7 @@ def run(
     # Putting these dependencies here makes the dashboard faster to load when the conversation app is installed
     from reachy_mini_conversation_app.moves import MovementManager
     from reachy_mini_conversation_app.config import (
-        HF_BACKEND,
         HF_LOCAL_CONNECTION_MODE,
-        config,
-        is_gemini_model,
-        get_backend_label,
         set_instance_path,
         get_hf_connection_selection,
         resolve_app_timeout_minutes,
@@ -115,20 +120,10 @@ def run(
         except Exception as e:
             logger.warning("Failed to load startup settings: %s", e)
 
-    if config.BACKEND_PROVIDER == HF_BACKEND:
-        logger.info(
-            "Configured backend provider: %s (%s), connection mode: %s",
-            config.BACKEND_PROVIDER,
-            get_backend_label(config.BACKEND_PROVIDER),
-            get_hf_connection_selection().mode,
-        )
-    else:
-        logger.info(
-            "Configured backend provider: %s (%s), model: %s",
-            config.BACKEND_PROVIDER,
-            get_backend_label(config.BACKEND_PROVIDER),
-            config.MODEL_NAME,
-        )
+    logger.info(
+        "Configured Hugging Face realtime backend, connection mode: %s",
+        get_hf_connection_selection().mode,
+    )
 
     from reachy_mini_conversation_app.console import LocalStream
     from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
@@ -158,6 +153,8 @@ def run(
             logger.error("Please check your configuration and try again.")
             sys.exit(1)
 
+    app_lifecycle.wake_up_if_sleeping(robot, logger)
+
     movement_manager = MovementManager(current_robot=robot)
 
     deps = ToolDependencies(
@@ -168,46 +165,17 @@ def run(
     )
 
     def build_handler(startup_voice: Optional[str] = None) -> ConversationHandler:
-        """Build a realtime handler for the current runtime backend config."""
-        if is_gemini_model():
-            from reachy_mini_conversation_app.gemini_live import GeminiLiveHandler
+        """Build a Hugging Face realtime handler for the current runtime config."""
+        from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
 
-            logger.info(
-                "Using %s via GeminiLiveHandler",
-                get_backend_label(config.BACKEND_PROVIDER),
-            )
-            return GeminiLiveHandler(
-                deps,
-                instance_path=instance_path,
-                startup_voice=startup_voice,
-            )
-        if config.BACKEND_PROVIDER == HF_BACKEND:
-            from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
-
-            hf_connection_selection = get_hf_connection_selection()
-            transport_label = (
-                "Hugging Face direct websocket"
-                if hf_connection_selection.mode == HF_LOCAL_CONNECTION_MODE and hf_connection_selection.has_target
-                else "Hugging Face session proxy"
-            )
-            logger.info(
-                "Using %s via Hugging Face realtime handler (%s)",
-                get_backend_label(config.BACKEND_PROVIDER),
-                transport_label,
-            )
-            return HuggingFaceRealtimeHandler(
-                deps,
-                instance_path=instance_path,
-                startup_voice=startup_voice,
-            )
-
-        from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
-
-        logger.info(
-            "Using %s via OpenAI realtime handler (OpenAI Realtime API)",
-            get_backend_label(config.BACKEND_PROVIDER),
+        hf_connection_selection = get_hf_connection_selection()
+        transport_label = (
+            "Hugging Face direct websocket"
+            if hf_connection_selection.mode == HF_LOCAL_CONNECTION_MODE and hf_connection_selection.has_target
+            else "Hugging Face session proxy"
         )
-        return OpenaiRealtimeHandler(
+        logger.info("Using Hugging Face realtime handler (%s)", transport_label)
+        return HuggingFaceRealtimeHandler(
             deps,
             instance_path=instance_path,
             startup_voice=startup_voice,
@@ -242,6 +210,64 @@ def run(
     if effective_settings_app is not None:
         stream_manager._init_settings_ui_if_needed()
 
+    go_to_sleep_lock = threading.Lock()
+    go_to_sleep_requested = threading.Event()
+
+    def go_to_sleep_and_stop_app() -> dict[str, Any]:
+        """Put Reachy to sleep, then stop the current app."""
+        if not go_to_sleep_lock.acquire(blocking=False):
+            return {"status": "already_requested"}
+
+        try:
+            if go_to_sleep_requested.is_set():
+                return {"status": "already_requested"}
+            go_to_sleep_requested.set()
+
+            logger.info("Going to sleep before stopping conversation app.")
+            sleep_error: str | None = None
+
+            try:
+                robot.disable_wobbling()
+            except Exception as e:
+                logger.debug("Error disabling wobbling before sleep: %s", e)
+
+            movement_manager.stop(reset_to_neutral=False)
+
+            try:
+                robot.goto_sleep()
+            except Exception as e:
+                sleep_error = f"{type(e).__name__}: {e}"
+                logger.error("Failed to move Reachy Mini to sleep pose: %s", e)
+
+            stop_current_app_requested = False
+            if app_stop_event is None or not app_stop_event.is_set():
+                stop_current_app_requested = app_lifecycle.request_stop_current_app(robot, logger)
+            local_stop_requested = True
+            if app_stop_event is not None:
+                app_stop_event.set()
+            else:
+                try:
+                    stream_manager.close()
+                except Exception as e:
+                    local_stop_requested = False
+                    logger.error("Error while closing stream manager after go_to_sleep: %s", e)
+
+            result: dict[str, Any] = {
+                "status": "sleeping" if sleep_error is None else "stop_requested",
+                "stop_current_app_requested": stop_current_app_requested,
+                "local_stop_requested": local_stop_requested,
+            }
+            if sleep_error is not None:
+                result["error"] = f"go_to_sleep movement failed: {sleep_error}"
+            return result
+        finally:
+            go_to_sleep_lock.release()
+
+    deps.go_to_sleep = go_to_sleep_and_stop_app
+
+    def run_go_to_sleep_tool() -> dict[str, Any]:
+        return app_lifecycle.run_go_to_sleep_tool(deps, logger)
+
     if args.ui and settings_app is None and effective_settings_app is not None:
         import uvicorn
 
@@ -266,7 +292,7 @@ def run(
 
     timeout_minutes = resolve_app_timeout_minutes()
     if timeout_minutes is not None:
-        _start_inactivity_timeout_thread(timeout_minutes, stream_manager, logger, app_stop_event)
+        _start_inactivity_timeout_thread(timeout_minutes, stream_manager, logger, app_stop_event, run_go_to_sleep_tool)
 
     def poll_stop_event() -> None:
         """Poll the stop event to allow graceful shutdown."""
@@ -274,6 +300,7 @@ def run(
             app_stop_event.wait()
 
         logger.info("App stop event detected, shutting down...")
+        run_go_to_sleep_tool()
         try:
             stream_manager.close()
         except Exception as e:
@@ -290,7 +317,9 @@ def run(
         if own_ui_server is not None:
             own_ui_server.should_exit = True
 
-        movement_manager.stop()
+        sleep_result = run_go_to_sleep_tool()
+        if "error" in sleep_result:
+            movement_manager.stop(reset_to_neutral=False)
         try:
             robot.disable_wobbling()
         except Exception as e:

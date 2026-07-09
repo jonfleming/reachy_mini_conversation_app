@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from reachy_mini_conversation_app.config import GEMINI_AVAILABLE_VOICES, config
+from reachy_mini_conversation_app.config import HF_AVAILABLE_VOICES, config
 from reachy_mini_conversation_app.console import LocalStream
 from reachy_mini_conversation_app.startup_settings import (
     StartupSettings,
@@ -82,23 +82,67 @@ def test_clear_audio_queue_drains_queue_in_place() -> None:
 
 
 def test_mic_endpoints_report_and_toggle_mute_state() -> None:
-    """The mic starts live; /mic exposes and flips the pause state."""
+    """The mic starts live; the settings API exposes and flips the pause state."""
     app = FastAPI()
     robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
     stream = LocalStream(MagicMock(), robot, settings_app=app)
     stream._init_settings_ui_if_needed()
     client = TestClient(app)
 
-    assert client.get("/mic").json() == {"muted": False}
+    assert client.get("/api/v1/mic").json() == {"muted": False}
 
-    assert client.post("/mic", json={"muted": True}).json() == {"muted": True}
+    assert client.post("/api/v1/mic", json={"muted": True}).json() == {"muted": True}
     assert stream._mic_muted is True
 
-    assert client.post("/mic", json={"muted": False}).json() == {"muted": False}
+    assert client.post("/api/v1/mic", json={"muted": False}).json() == {"muted": False}
     assert stream._mic_muted is False
 
     # headless streams keep the mic live
     assert LocalStream(MagicMock(), robot)._mic_muted is False
+
+
+def test_settings_api_uses_versioned_routes_only() -> None:
+    """Settings clients should use the versioned API paths."""
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app)
+    stream._init_settings_ui_if_needed()
+    client = TestClient(app)
+
+    assert client.get("/api/v1/mic").json() == {"muted": False}
+
+    response = client.post("/api/v1/mic", json={"muted": True})
+
+    assert response.status_code == 200
+    assert response.json() == {"muted": True}
+    assert stream._mic_muted is True
+    assert client.get("/api/v1/status").json()["backend"]
+    assert client.get("/api/v1/ready").status_code == 404
+    assert client.get("/status").status_code == 404
+    assert client.get("/ready").status_code == 404
+    assert client.post("/backend_config", json={"backend": "openai"}).status_code == 404
+    assert client.get("/mic").status_code == 404
+    assert client.post("/mic", json={"muted": False}).status_code == 404
+    assert client.get("/conversation_events").status_code == 404
+
+
+def test_settings_ui_detaches_framework_catch_all_before_api_routes() -> None:
+    """Framework fallback routes should not shadow the settings API."""
+    app = FastAPI()
+
+    @app.get("/{path:path}")
+    def _framework_fallback(path: str) -> None:
+        raise HTTPException(status_code=404)
+
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app)
+    stream._init_settings_ui_if_needed()
+    client = TestClient(app)
+
+    assert client.get("/").status_code == 200
+    assert client.get("/static/js/api.js").status_code == 200
+    assert client.get("/api/v1/mic").status_code == 200
+    assert client.get("/api/v1/personalities").status_code == 200
 
 
 @pytest.mark.asyncio
@@ -124,73 +168,15 @@ async def test_conversation_events_survive_handler_rebuild() -> None:
     unsubscribe()
 
 
-def test_backend_config_persists_gemini_selection_and_status(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Settings API should persist Gemini backend choice and token."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime-2")
-    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
-    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
-    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
-    monkeypatch.setenv("MODEL_NAME", "gpt-realtime-2")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-
-    app = FastAPI()
-    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
-    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
-    stream._init_settings_ui_if_needed()
-
-    client = TestClient(app)
-
-    response = client.post(
-        "/backend_config",
-        json={"backend": "gemini", "api_key": "gem-test-token"},
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["backend_provider"] == "gemini"
-    assert data["active_backend"] == "openai"
-    assert data["has_gemini_key"] is True
-    assert data["has_key"] is False
-    assert data["can_proceed"] is False
-    assert data["can_proceed_with_openai"] is False
-    assert data["can_proceed_with_gemini"] is True
-    assert data["requires_restart"] is True
-
-    status = client.get("/status")
-    assert status.status_code == 200
-    status_data = status.json()
-    assert status_data["backend_provider"] == "gemini"
-    assert status_data["active_backend"] == "openai"
-    assert status_data["has_gemini_key"] is True
-    assert status_data["can_proceed"] is False
-    assert status_data["can_proceed_with_openai"] is False
-    assert status_data["can_proceed_with_gemini"] is True
-
-    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert "BACKEND_PROVIDER=gemini" in env_text
-    assert "MODEL_NAME=gemini-3.1-flash-live-preview" in env_text
-    assert "GEMINI_API_KEY=gem-test-token" in env_text
-
-
 def test_backend_config_requests_in_process_restart_with_handler_factory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A rebuild-capable LocalStream should reconnect in process after backend changes."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime-2")
-    monkeypatch.setattr(config, "OPENAI_API_KEY", "openai-test-key")
-    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
-    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
-    monkeypatch.setenv("MODEL_NAME", "gpt-realtime-2")
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    """A rebuild-capable LocalStream should reconnect in process after a connection change."""
+    monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "deployed")
+    monkeypatch.setattr(config, "HF_REALTIME_WS_URL", None)
+    monkeypatch.delenv("HF_REALTIME_CONNECTION_MODE", raising=False)
+    monkeypatch.delenv("HF_REALTIME_WS_URL", raising=False)
 
     app = FastAPI()
     handler = MagicMock()
@@ -206,60 +192,19 @@ def test_backend_config_requests_in_process_restart_with_handler_factory(
     stream._init_settings_ui_if_needed()
 
     response = TestClient(app).post(
-        "/backend_config",
-        json={"backend": "gemini", "api_key": "gem-test-token"},
+        "/api/v1/backend_config",
+        json={"hf_mode": "local", "hf_host": "localhost", "hf_port": 8765},
     )
 
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
-    assert data["message"] == "Backend saved. Reconnecting backend."
-    assert data["backend_provider"] == "gemini"
+    assert data["message"] == "Connection saved. Reconnecting backend."
+    assert data["backend"] == "huggingface"
     assert data["requires_restart"] is False
     assert data["can_proceed"] is True
     assert data["backend_connection_state"] == "connecting"
     assert stream._restart_requested.is_set()
-
-
-def test_backend_config_preserves_explicit_model_override_when_saving_key(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Saving credentials should not reset a custom model override."""
-    custom_model = "gpt-4o-realtime-preview-2025-06-03"
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "MODEL_NAME", custom_model)
-    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
-    monkeypatch.setattr(config, "GEMINI_API_KEY", None)
-    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
-    monkeypatch.setenv("MODEL_NAME", custom_model)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-
-    app = FastAPI()
-    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
-    stream = LocalStream(MagicMock(), robot, settings_app=app, instance_path=str(tmp_path))
-    stream._init_settings_ui_if_needed()
-
-    client = TestClient(app)
-    response = client.post(
-        "/backend_config",
-        json={"backend": "openai", "api_key": "openai-test-key"},
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["can_proceed"] is True
-    assert data["can_proceed_with_openai"] is True
-    assert data["can_proceed_with_gemini"] is False
-    assert config.MODEL_NAME == custom_model
-
-    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert "BACKEND_PROVIDER=openai" in env_text
-    assert f"MODEL_NAME={custom_model}" in env_text
-    assert "MODEL_NAME=gpt-realtime-2" not in env_text
-    assert "OPENAI_API_KEY=openai-test-key" in env_text
 
 
 def test_backend_config_persists_local_hf_selection_and_status(
@@ -267,13 +212,9 @@ def test_backend_config_persists_local_hf_selection_and_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Settings API should persist a direct Hugging Face websocket target."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime-2")
     monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "deployed")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
     monkeypatch.setattr(config, "HF_REALTIME_WS_URL", None)
-    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
-    monkeypatch.setenv("MODEL_NAME", "gpt-realtime-2")
     monkeypatch.delenv("HF_REALTIME_CONNECTION_MODE", raising=False)
     monkeypatch.delenv("HF_REALTIME_SESSION_URL", raising=False)
     monkeypatch.delenv("HF_REALTIME_WS_URL", raising=False)
@@ -285,9 +226,8 @@ def test_backend_config_persists_local_hf_selection_and_status(
 
     client = TestClient(app)
     response = client.post(
-        "/backend_config",
+        "/api/v1/backend_config",
         json={
-            "backend": "huggingface",
             "hf_mode": "local",
             "hf_host": "localhost",
             "hf_port": 8765,
@@ -297,21 +237,16 @@ def test_backend_config_persists_local_hf_selection_and_status(
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
-    assert data["backend_provider"] == "huggingface"
-    assert data["active_backend"] == "openai"
+    assert data["backend"] == "huggingface"
     assert data["has_hf_ws_url"] is True
     assert data["has_hf_connection"] is True
     assert data["hf_connection_mode"] == "local"
     assert data["hf_direct_host"] == "localhost"
     assert data["hf_direct_port"] == 8765
-    assert data["requires_restart"] is True
 
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-    env_lines = env_text.splitlines()
-    assert "BACKEND_PROVIDER=huggingface" in env_text
     assert "HF_REALTIME_CONNECTION_MODE=local" in env_text
     assert "HF_REALTIME_WS_URL=ws://localhost:8765/v1/realtime" in env_text
-    assert not any(line.startswith("MODEL_NAME=") for line in env_lines)
 
 
 def test_backend_config_persists_deployed_mode_without_clearing_local_hf_ws_url(
@@ -321,19 +256,14 @@ def test_backend_config_persists_deployed_mode_without_clearing_local_hf_ws_url(
     """Saving deployed mode should make env selection explicit and remove stale allocator URLs."""
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "BACKEND_PROVIDER=huggingface\n"
         "HF_REALTIME_SESSION_URL=https://lb.example.test/session\n"
         "HF_REALTIME_WS_URL=ws://localhost:8765/v1/realtime\n",
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
-    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime-2")
     monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "deployed")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", "https://lb.example.test/session")
     monkeypatch.setattr(config, "HF_REALTIME_WS_URL", "ws://localhost:8765/v1/realtime")
-    monkeypatch.setenv("BACKEND_PROVIDER", "huggingface")
-    monkeypatch.setenv("MODEL_NAME", "gpt-realtime-2")
     monkeypatch.delenv("HF_REALTIME_CONNECTION_MODE", raising=False)
     monkeypatch.setenv("HF_REALTIME_SESSION_URL", "https://lb.example.test/session")
     monkeypatch.setenv("HF_REALTIME_WS_URL", "ws://localhost:8765/v1/realtime")
@@ -345,9 +275,8 @@ def test_backend_config_persists_deployed_mode_without_clearing_local_hf_ws_url(
 
     client = TestClient(app)
     response = client.post(
-        "/backend_config",
+        "/api/v1/backend_config",
         json={
-            "backend": "huggingface",
             "hf_mode": "deployed",
         },
     )
@@ -372,20 +301,13 @@ def test_backend_config_switches_to_saved_local_hf_connection_without_payload_ta
     """Switching back to a saved local Hugging Face backend should reuse the persisted target."""
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "BACKEND_PROVIDER=openai\n"
-        "MODEL_NAME=gpt-realtime-2\n"
-        "HF_REALTIME_CONNECTION_MODE=local\n"
-        "HF_REALTIME_WS_URL=ws://192.168.1.42:8766/v1/realtime\n",
+        "HF_REALTIME_CONNECTION_MODE=local\nHF_REALTIME_WS_URL=ws://192.168.1.42:8766/v1/realtime\n",
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime-2")
     monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
     monkeypatch.setattr(config, "HF_REALTIME_WS_URL", "ws://192.168.1.42:8766/v1/realtime")
-    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
-    monkeypatch.setenv("MODEL_NAME", "gpt-realtime-2")
     monkeypatch.setenv("HF_REALTIME_CONNECTION_MODE", "local")
     monkeypatch.setenv("HF_REALTIME_WS_URL", "ws://192.168.1.42:8766/v1/realtime")
 
@@ -396,20 +318,19 @@ def test_backend_config_switches_to_saved_local_hf_connection_without_payload_ta
 
     client = TestClient(app)
     response = client.post(
-        "/backend_config",
-        json={"backend": "huggingface"},
+        "/api/v1/backend_config",
+        json={},
     )
 
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
-    assert data["backend_provider"] == "huggingface"
+    assert data["backend"] == "huggingface"
     assert data["hf_connection_mode"] == "local"
     assert data["hf_direct_host"] == "192.168.1.42"
     assert data["hf_direct_port"] == 8766
 
     env_text = env_path.read_text(encoding="utf-8")
-    assert "BACKEND_PROVIDER=huggingface" in env_text
     assert "HF_REALTIME_CONNECTION_MODE=local" in env_text
     assert "HF_REALTIME_WS_URL=ws://192.168.1.42:8766/v1/realtime" in env_text
 
@@ -419,7 +340,6 @@ def test_backend_config_rejects_invalid_hf_port_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Settings API should reject invalid local Hugging Face ports from direct callers."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
     monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "deployed")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
     monkeypatch.setattr(config, "HF_REALTIME_WS_URL", None)
@@ -431,7 +351,7 @@ def test_backend_config_rejects_invalid_hf_port_zero(
 
     client = TestClient(app)
     response = client.post(
-        "/backend_config",
+        "/api/v1/backend_config",
         json={
             "backend": "huggingface",
             "hf_mode": "local",
@@ -449,7 +369,6 @@ def test_status_reports_direct_hf_ws_url_as_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Settings API should treat a direct Hugging Face websocket as a valid configuration."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
     monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
     monkeypatch.setattr(config, "HF_REALTIME_WS_URL", "ws://127.0.0.1:8765/v1/realtime")
@@ -460,11 +379,11 @@ def test_status_reports_direct_hf_ws_url_as_ready(
     stream._init_settings_ui_if_needed()
 
     client = TestClient(app)
-    response = client.get("/status")
+    response = client.get("/api/v1/status")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["backend_provider"] == "huggingface"
+    assert data["backend"] == "huggingface"
     assert data["has_hf_session_url"] is False
     assert data["has_hf_ws_url"] is True
     assert data["has_hf_connection"] is True
@@ -477,7 +396,6 @@ def test_status_reports_backend_connection_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Settings API should expose backend connection failures without hiding controls."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
     monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
     monkeypatch.setattr(config, "HF_REALTIME_WS_URL", "ws://127.0.0.1:8765/v1/realtime")
@@ -491,11 +409,11 @@ def test_status_reports_backend_connection_failure(
     stream._init_settings_ui_if_needed()
 
     client = TestClient(app)
-    response = client.get("/status")
+    response = client.get("/api/v1/status")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["backend_provider"] == "huggingface"
+    assert data["backend"] == "huggingface"
     assert data["backend_connected"] is False
     assert data["backend_connection_state"] == "disconnected"
     assert data["backend_error"] == "RuntimeError: connect failed"
@@ -508,7 +426,6 @@ def test_backend_startup_failure_is_recorded_without_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Backend startup failures should become status state instead of killing LocalStream."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "huggingface")
     monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
     monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
     monkeypatch.setattr(config, "HF_REALTIME_WS_URL", "ws://127.0.0.1:8765/v1/realtime")
@@ -543,7 +460,7 @@ def test_backend_startup_failure_is_recorded_without_raising(
 
     handler.start_up.assert_awaited_once()
     client = TestClient(app)
-    response = client.get("/status")
+    response = client.get("/api/v1/status")
 
     assert response.status_code == 200
     data = response.json()
@@ -553,32 +470,25 @@ def test_backend_startup_failure_is_recorded_without_raising(
 
 
 @pytest.mark.asyncio
-async def test_startup_loop_rebuilds_handler_for_backend_change(monkeypatch: pytest.MonkeyPatch) -> None:
-    """LocalStream should own backend swaps by shutting down and rebuilding the handler."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "MODEL_NAME", "gpt-realtime-2")
-    monkeypatch.setattr(config, "OPENAI_API_KEY", "openai-test-key")
-    monkeypatch.setattr(config, "GEMINI_API_KEY", "gem-test-key")
+async def test_startup_loop_rebuilds_handler_on_restart_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LocalStream should shut down and rebuild the handler when a restart is requested."""
+    monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
+    monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
+    monkeypatch.setattr(config, "HF_REALTIME_WS_URL", "ws://127.0.0.1:8765/v1/realtime")
 
     class FakeHandler:
-        def __init__(self, backend: str) -> None:
-            self.backend = backend
+        def __init__(self) -> None:
             self.connection = None
-            self.session = None
             self.output_queue = asyncio.Queue()
             self.started = asyncio.Event()
             self.stopped = asyncio.Event()
             self.shutdown_calls = 0
 
         async def start_up(self) -> None:
-            if self.backend == "gemini":
-                self.session = object()
-            else:
-                self.connection = object()
+            self.connection = object()
             self.started.set()
             await self.stopped.wait()
             self.connection = None
-            self.session = None
 
         async def shutdown(self) -> None:
             self.shutdown_calls += 1
@@ -593,7 +503,7 @@ async def test_startup_loop_rebuilds_handler_for_backend_change(monkeypatch: pyt
     handlers: list[FakeHandler] = []
 
     def handler_factory(_voice: str | None) -> FakeHandler:
-        handler = FakeHandler(config.BACKEND_PROVIDER)
+        handler = FakeHandler()
         handlers.append(handler)
         return handler
 
@@ -606,16 +516,12 @@ async def test_startup_loop_rebuilds_handler_for_backend_change(monkeypatch: pyt
     try:
         await _wait_until(lambda: initial_handler.started.is_set())
 
-        monkeypatch.setattr(config, "BACKEND_PROVIDER", "gemini")
-        monkeypatch.setattr(config, "MODEL_NAME", "gemini-3.1-flash-live-preview")
         await stream.request_backend_restart("backend_config_changed")
 
         await _wait_until(lambda: len(handlers) == 2 and handlers[1].started.is_set())
 
         assert initial_handler.shutdown_calls >= 1
-        assert handlers[1].backend == "gemini"
         assert stream.handler is handlers[1]
-        assert stream._active_backend_name == "gemini"
         assert stream._backend_connected() is True
     finally:
         stream._stop_event.set()
@@ -627,13 +533,8 @@ async def test_startup_loop_rebuilds_handler_for_backend_change(monkeypatch: pyt
             pass
 
 
-def test_personality_routes_return_gemini_voices_when_backend_selected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Headless personality UI should expose Gemini voices when Gemini is selected."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "gemini")
-    monkeypatch.setattr(config, "MODEL_NAME", "gemini-3.1-flash-live-preview")
-
+def test_personality_routes_return_hf_voices() -> None:
+    """Headless personality UI should expose the Hugging Face voices."""
     app = FastAPI()
     handler = MagicMock()
     mount_personality_routes(app, handler, lambda: None)
@@ -642,7 +543,32 @@ def test_personality_routes_return_gemini_voices_when_backend_selected(
     response = client.get("/voices")
 
     assert response.status_code == 200
-    assert response.json() == GEMINI_AVAILABLE_VOICES
+    assert response.json() == HF_AVAILABLE_VOICES
+
+
+def test_personality_routes_mount_versioned_paths() -> None:
+    """Personality and voice endpoints should use the configured API prefix."""
+    app = FastAPI()
+    handler = MagicMock()
+
+    mount_personality_routes(
+        app,
+        handler,
+        lambda: None,
+        api_prefix="/api/v1",
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/v1/voices")
+    delete_response = client.delete("/api/v1/personalities", params={"name": "mad_scientist_assistant"})
+
+    assert response.status_code == 200
+    assert delete_response.status_code == 404
+    assert delete_response.json()["error"] == "not_deletable"
+    assert client.get("/personalities").status_code == 404
+    assert client.get("/voices").status_code == 404
+    assert client.delete("/personalities", params={"name": "mad_scientist_assistant"}).status_code == 404
+    assert client.post("/voices/apply?voice=cedar").status_code == 404
 
 
 def test_personality_routes_load_builtin_default_tools() -> None:
@@ -680,10 +606,10 @@ def test_personality_routes_apply_voice_accepts_query_param() -> None:
     started.wait(timeout=1.0)
 
     try:
-        mount_personality_routes(app, handler, lambda: loop)
+        mount_personality_routes(app, handler, lambda: loop, api_prefix="/api/v1")
 
         client = TestClient(app)
-        response = client.post("/voices/apply?voice=cedar")
+        response = client.post("/api/v1/voices/apply?voice=cedar")
 
         assert response.status_code == 200
         assert response.json() == {"ok": True, "status": "Voice changed to cedar."}
@@ -745,6 +671,29 @@ def test_personality_routes_apply_same_profile_does_not_restart(monkeypatch: pyt
     assert response.json()["status"] == "Personality unchanged."
     handler.apply_personality.assert_not_awaited()
     handler.get_current_voice.assert_not_called()
+
+
+def test_personality_routes_startup_choice_survives_runtime_profile_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime profile switching should not redefine the saved startup personality."""
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "captain_circuit")
+    app = FastAPI()
+    handler = MagicMock()
+    mount_personality_routes(app, handler, lambda: None)
+    client = TestClient(app)
+
+    initial_response = client.get("/personalities")
+    assert initial_response.status_code == 200
+    assert initial_response.json()["current"] == "captain_circuit"
+    assert initial_response.json()["startup"] == "captain_circuit"
+
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "chess_coach")
+
+    switched_response = client.get("/personalities")
+    assert switched_response.status_code == 200
+    assert switched_response.json()["current"] == "chess_coach"
+    assert switched_response.json()["startup"] == "captain_circuit"
 
 
 def test_headless_personality_routes_can_use_stream_callbacks() -> None:
@@ -840,7 +789,7 @@ def test_local_stream_persist_personality_clears_legacy_startup_env_overrides(tm
     """Saving startup settings should remove legacy `.env` profile and voice overrides."""
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "OPENAI_API_KEY=test-key\n"
+        "HF_TOKEN=test-token\n"
         "REACHY_MINI_CUSTOM_PROFILE=mad_scientist_assistant\n"
         "REACHY_MINI_VOICE_OVERRIDE=shimmer\n",
         encoding="utf-8",
@@ -850,7 +799,7 @@ def test_local_stream_persist_personality_clears_legacy_startup_env_overrides(tm
     stream._persist_personality(None, "Aiden")
 
     env_text = env_path.read_text(encoding="utf-8")
-    assert "OPENAI_API_KEY=test-key" in env_text
+    assert "HF_TOKEN=test-token" in env_text
     assert "REACHY_MINI_CUSTOM_PROFILE=" not in env_text
     assert "REACHY_MINI_VOICE_OVERRIDE=" not in env_text
 
@@ -867,15 +816,14 @@ def test_local_stream_persist_personality_clears_legacy_startup_env_overrides(tm
     assert applied_profiles == [None]
 
 
-def test_local_stream_launch_waits_for_manual_openai_key_without_download(
+def test_local_stream_launch_waits_for_missing_hf_target_without_starting_media(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OpenAI startup should wait for settings input instead of claiming a bundled key."""
-    monkeypatch.setattr(config, "BACKEND_PROVIDER", "openai")
-    monkeypatch.setattr(config, "OPENAI_API_KEY", None)
-    monkeypatch.setenv("BACKEND_PROVIDER", "openai")
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    """Startup should wait for settings input when the Hugging Face target is missing."""
+    monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
+    monkeypatch.setattr(config, "HF_REALTIME_SESSION_URL", None)
+    monkeypatch.setattr(config, "HF_REALTIME_WS_URL", None)
 
     media = SimpleNamespace(
         start_recording=MagicMock(),
@@ -883,11 +831,9 @@ def test_local_stream_launch_waits_for_manual_openai_key_without_download(
     )
     robot = SimpleNamespace(media=media)
     stream = LocalStream(MagicMock(), robot, settings_app=FastAPI(), instance_path=str(tmp_path))
-    stream._active_backend_name = "openai"
 
     init_settings_ui = MagicMock()
     monkeypatch.setattr(stream, "_init_settings_ui_if_needed", init_settings_ui)
-    monkeypatch.setattr(stream, "_has_required_key", MagicMock(side_effect=[False, False]))
     monkeypatch.setattr("reachy_mini_conversation_app.console.time.sleep", MagicMock(side_effect=KeyboardInterrupt))
 
     stream.launch()

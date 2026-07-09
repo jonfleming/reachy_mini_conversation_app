@@ -77,7 +77,9 @@ export async function mountHomeView({ outlet, signal, navigate }) {
           disabled,
           onSelect: () => handleSelection(name),
           onEdit: editable ? () => handleEditClick(name) : null,
-          onDelete: editable ? () => handleDeleteClick(name) : null,
+          // No delete affordance for the active personality: it would keep
+          // running with no card to manage it.
+          onDelete: editable && name !== current ? (slot) => handleDeleteClick(name, slot) : null,
         })
       );
     }
@@ -205,7 +207,7 @@ export async function mountHomeView({ outlet, signal, navigate }) {
     }
   }
 
-  async function handleDeleteClick(name) {
+  async function handleDeleteClick(name, slot) {
     const ok = await confirmDialog({
       title: "Delete personality?",
       message: `"${prettifyProfileName(name)}" will be permanently removed.`,
@@ -222,14 +224,8 @@ export async function mountHomeView({ outlet, signal, navigate }) {
       status.classList.add("is-error");
       return;
     }
-    let data;
-    try {
-      data = await listPersonalities();
-    } catch {
-      return;
-    }
     if (signal.aborted) return;
-    renderChoices(data);
+    slot.remove();
     status.textContent = `Deleted "${prettifyProfileName(name)}".`;
   }
 }
@@ -262,13 +258,10 @@ function buildPersonalityCard({ name, isActive, disabled, onSelect, onEdit, onDe
     isActive && checkBadge()
   );
   // Wrap so the edit/delete buttons are siblings, not nested <button>s inside the card button.
-  return h(
-    "div",
-    { class: "personality-card-slot", role: "listitem" },
-    card,
-    onDelete ? buildDeleteButton({ name, onDelete }) : null,
-    onEdit ? buildEditButton({ name, onEdit }) : null
-  );
+  const slot = h("div", { class: "personality-card-slot", role: "listitem" }, card);
+  if (onDelete) slot.appendChild(buildDeleteButton({ name, onDelete: () => onDelete(slot) }));
+  if (onEdit) slot.appendChild(buildEditButton({ name, onEdit }));
+  return slot;
 }
 
 /** Small overlay button to delete a user personality, anchored left of the edit button. */

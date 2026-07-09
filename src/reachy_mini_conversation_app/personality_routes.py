@@ -16,8 +16,8 @@ from pydantic import BaseModel
 from .config import (
     LOCKED_PROFILE,
     config,
-    get_default_voice_for_backend,
-    get_available_voices_for_backend,
+    get_default_voice,
+    get_available_voices,
 )
 from .personality import (
     DEFAULT_OPTION,
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 class ApplyPayload(BaseModel):
-    """Body of POST /personalities/apply.
+    """Body of the apply-personality endpoint.
 
     Module-level: under postponed annotations, FastAPI can't resolve a
     function-local model and silently treats it as a query param.
@@ -56,15 +56,18 @@ def mount_personality_routes(
     persist_personality: Callable[[Optional[str], Optional[str]], None] | None = None,
     get_persisted_personality: Callable[[], Optional[str]] | None = None,
     apply_personality: Callable[[Optional[str]], Awaitable[str]] | None = None,
-    get_available_voices: Callable[[], Awaitable[list[str]]] | None = None,
+    get_voices: Callable[[], Awaitable[list[str]]] | None = None,
     get_current_voice: Callable[[], str] | None = None,
     change_voice: Callable[[str], Awaitable[str]] | None = None,
+    api_prefix: str | None = None,
 ) -> None:
     """Register personality management endpoints on a FastAPI app."""
     from fastapi.responses import JSONResponse
 
-    def _startup_choice() -> Any:
-        """Return the persisted startup personality or default."""
+    api_prefix = (api_prefix or "").rstrip("/")
+
+    def _configured_startup_choice() -> Any:
+        """Return the startup personality configured when routes mount."""
         try:
             if get_persisted_personality is not None:
                 stored = get_persisted_personality()
@@ -73,9 +76,26 @@ def mount_personality_routes(
             env_val = getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
             if env_val:
                 return env_val
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to read configured startup personality: %s", e)
         return DEFAULT_OPTION
+
+    startup_choice = _configured_startup_choice()
+
+    def _startup_choice() -> Any:
+        """Return the persisted startup personality or default."""
+        try:
+            if get_persisted_personality is not None:
+                stored = get_persisted_personality()
+                if stored:
+                    return stored
+        except Exception as e:
+            logger.warning("Failed to read persisted startup personality: %s", e)
+        return startup_choice
+
+    def _set_startup_choice(selected_name: str) -> None:
+        nonlocal startup_choice
+        startup_choice = DEFAULT_OPTION if selected_name == DEFAULT_OPTION else selected_name
 
     def _current_choice() -> str:
         try:
@@ -88,7 +108,7 @@ def mount_personality_routes(
         current_voice_callback = get_current_voice or getattr(handler, "get_current_voice", None)
         return current_voice_callback() if callable(current_voice_callback) else None
 
-    @app.get("/personalities")
+    @app.get(f"{api_prefix}/personalities")
     def _list() -> dict:  # type: ignore
         choices = [DEFAULT_OPTION, *list_personalities()]
         return {
@@ -99,19 +119,19 @@ def mount_personality_routes(
             "locked_to": LOCKED_PROFILE,
         }
 
-    @app.get("/personalities/load")
+    @app.get(f"{api_prefix}/personalities/load")
     def _load(name: str) -> dict:  # type: ignore
         instr = read_instructions_for(name)
         tools_txt = read_tools_for(name)
         greeting = read_greeting_for(name)
-        voice = get_default_voice_for_backend()
+        voice = get_default_voice()
         uses_default_voice = True
         if name != DEFAULT_OPTION:
             pdir = resolve_profile_dir(name)
             vf = pdir / "voice.txt"
             if vf.exists():
                 v = vf.read_text(encoding="utf-8").strip()
-                voice = v or get_default_voice_for_backend()
+                voice = v or get_default_voice()
                 uses_default_voice = not bool(v)
         avail = available_tools_for(name)
         enabled = [ln.strip() for ln in tools_txt.splitlines() if ln.strip() and not ln.strip().startswith("#")]
@@ -125,7 +145,7 @@ def mount_personality_routes(
             "enabled_tools": enabled,
         }
 
-    @app.post("/personalities/save")
+    @app.post(f"{api_prefix}/personalities/save")
     async def _save(request: Request) -> dict:  # type: ignore
         # Accept raw JSON only to avoid validation-related 422s
         try:
@@ -136,11 +156,7 @@ def mount_personality_routes(
         instructions = str(raw.get("instructions", ""))
         greeting = str(raw["greeting"]) if raw.get("greeting") is not None else None
         tools_text = str(raw.get("tools_text", ""))
-        voice = (
-            str(raw.get("voice", get_default_voice_for_backend()))
-            if raw.get("voice") is not None
-            else get_default_voice_for_backend()
-        )
+        voice = str(raw.get("voice", get_default_voice())) if raw.get("voice") is not None else get_default_voice()
 
         sanitized_name = _sanitize_name(name)
         if not sanitized_name:
@@ -158,7 +174,7 @@ def mount_personality_routes(
                 sanitized_name,
                 instructions,
                 tools_text,
-                voice or get_default_voice_for_backend(),
+                voice or get_default_voice(),
                 greeting,
             )
             value = f"user_personalities/{sanitized_name}"
@@ -167,13 +183,25 @@ def mount_personality_routes(
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)  # type: ignore
 
-    @app.delete("/personalities")
+    @app.delete(f"{api_prefix}/personalities")
     def _delete(name: str) -> dict:  # type: ignore
         """Delete a user-created personality (name is the full selection string)."""
+        if name in (_current_choice(), _startup_choice()):
+            # Deleting the active/startup profile would break get_session_instructions() at next startup.
+            return JSONResponse(
+                {"ok": False, "error": "profile_in_use", "choices": [DEFAULT_OPTION, *list_personalities()]},
+                status_code=409,
+            )  # type: ignore
         deleted = delete_personality(name)
-        return {"ok": deleted, "choices": [DEFAULT_OPTION, *list_personalities()]}
+        if not deleted:
+            # Built-in profile, outside the user root, or already gone; nothing was removed.
+            return JSONResponse(
+                {"ok": False, "error": "not_deletable", "choices": [DEFAULT_OPTION, *list_personalities()]},
+                status_code=404,
+            )  # type: ignore
+        return {"ok": True, "choices": [DEFAULT_OPTION, *list_personalities()]}
 
-    @app.post("/personalities/apply")
+    @app.post(f"{api_prefix}/personalities/apply")
     async def _apply(payload: ApplyPayload) -> dict:  # type: ignore
         if LOCKED_PROFILE is not None:
             return JSONResponse(
@@ -189,6 +217,7 @@ def mount_personality_routes(
                 try:
                     voice_override = _voice_override()
                     persist_personality(None if selected_name == DEFAULT_OPTION else selected_name, voice_override)
+                    _set_startup_choice(selected_name)
                     persisted_choice = _startup_choice()
                 except Exception as e:
                     logger.warning("Failed to persist startup personality: %s", e)
@@ -217,6 +246,7 @@ def mount_personality_routes(
             if persist and persist_personality is not None:
                 try:
                     persist_personality(None if selected_name == DEFAULT_OPTION else selected_name, voice_override)
+                    _set_startup_choice(selected_name)
                     persisted_choice = _startup_choice()
                 except Exception as e:
                     logger.warning("Failed to persist startup personality: %s", e)
@@ -224,36 +254,36 @@ def mount_personality_routes(
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)  # type: ignore
 
-    @app.get("/voices")
+    @app.get(f"{api_prefix}/voices")
     async def _voices() -> list[str]:
         loop = get_loop()
         if loop is None:
-            return get_available_voices_for_backend()
+            return get_available_voices()
 
         async def _get_v() -> list[str]:
             try:
-                if get_available_voices is not None:
-                    return await get_available_voices()
+                if get_voices is not None:
+                    return await get_voices()
                 return await handler.get_available_voices()
             except Exception:
-                return get_available_voices_for_backend()
+                return get_available_voices()
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_get_v(), loop)
             return fut.result(timeout=10)
         except Exception:
-            return get_available_voices_for_backend()
+            return get_available_voices()
 
-    @app.get("/voices/current")
+    @app.get(f"{api_prefix}/voices/current")
     def _current_voice() -> dict[str, str]:
         try:
             if get_current_voice is not None:
                 return {"voice": get_current_voice()}
             return {"voice": handler.get_current_voice()}
         except Exception:
-            return {"voice": get_default_voice_for_backend()}
+            return {"voice": get_default_voice()}
 
-    @app.post("/voices/apply")
+    @app.post(f"{api_prefix}/voices/apply")
     async def _apply_voice(request: Request, voice: str | None = Query(None)) -> dict:  # type: ignore
         voice = str(voice or "")
         if not voice:
