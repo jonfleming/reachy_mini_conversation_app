@@ -1,0 +1,7 @@
+"Describe what this behavior does (the AI reads this)"
+
+body left 160 fast
+wait 0.5s
+picture
+wait 0.5s
+body center fast
