@@ -18,6 +18,9 @@ dependencies = [
     #Environment variables
     "python-dotenv",
 
+    #Templating (viber system prompt)
+    "jinja2>=3",
+
     #OpenAI (used by the Hugging Face backend)
     "openai==2.28.0",
 
@@ -68,6 +71,7 @@ reachy_mini_conversation_app = [
   "static/**/*",
   ".env.example",
   "rmscript_reference.md",
+  "viber_system_prompt.md.j2",
 ]
 reachy_talk_data = [
   "profiles/**/*.txt",

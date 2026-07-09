@@ -20,6 +20,7 @@ from pathlib import Path
 from functools import lru_cache
 from dataclasses import field, dataclass
 
+import jinja2
 from rmscript import compile_script
 
 from . import sound_library
@@ -183,22 +184,20 @@ def _available_sounds() -> List[str]:
 # --------------------------------------------------------------------------- #
 # Prompt construction
 # --------------------------------------------------------------------------- #
-_OUTPUT_SCHEMA = """
-Return ONLY a single JSON object (no prose, no markdown fences) with this shape:
-{
-  "name": "short_snake_case_name",
-  "instructions": "The system prompt: who the robot is, how it talks, when it uses its tools.",
-  "greeting": "A short in-character opening line (optional, may be empty).",
-  "enable_tools": ["exact_name_of_an_existing_tool", "..."],
-  "new_behaviors": [
-    {
-      "name": "short_snake_case_behavior_name",
-      "description": "One sentence describing what the movement does (the AI reads this).",
-      "rmscript": "the rmscript source code for this behavior"
-    }
-  ]
-}
-""".strip()
+# The viber system prompt lives in this Jinja2 template so it can be tuned without
+# touching code. Placeholders: {{ catalog_lines }}, {{ sounds_line }}, {{ reference }}.
+_SYSTEM_PROMPT_TEMPLATE = "viber_system_prompt.md.j2"
+
+
+@lru_cache(maxsize=1)
+def _system_template() -> "jinja2.Template":
+    """Load and compile the system-prompt template (cached).
+
+    autoescape is off (this is plain text, not HTML) so the rmscript reference and
+    JSON schema pass through verbatim.
+    """
+    path = Path(__file__).parent / _SYSTEM_PROMPT_TEMPLATE
+    return jinja2.Template(path.read_text(encoding="utf-8"), autoescape=False, keep_trailing_newline=True)
 
 
 def build_generation_messages(
@@ -207,39 +206,13 @@ def build_generation_messages(
     sounds: List[str],
 ) -> List[Dict[str, str]]:
     """Build the chat messages for the main generation call."""
-    reference = load_rmscript_reference()
     catalog_lines = "\n".join(f"- {t['name']}: {t['description']}".rstrip() for t in catalog) or "(none)"
     sounds_line = ", ".join(sounds) if sounds else "(none available)"
-
-    system = f"""You design personalities for Reachy Mini, a small expressive desk robot with a \
-moving head, two antennas, a rotating body, a camera and a speaker.
-
-A personality has: a system prompt ("instructions"), an optional greeting, a set of existing \
-tools it may use, and optionally NEW movement behaviors you write in the "rmscript" language.
-
-Your job: from the user's description, produce a complete personality.
-
-RULES
-- New behaviors MUST be written in rmscript (never Python). Keep each one short.
-- To use an existing capability, list its exact name in "enable_tools" — do NOT reinvent it as a behavior.
-- Reference sounds only by a name from the available list; if none fit, omit sound commands.
-- Names must be snake_case (letters, digits, underscores). Keep behaviors focused (a few lines).
-- Behavior names should be short and describe the ACTION only (e.g. "perk_up", "look_around", \
-"happy_wiggle"). Do NOT repeat the personality's name or theme in them — they are namespaced automatically.
-- The first line of each behavior's rmscript should be its description as a quoted string.
-- Write the instructions in the same language the user used in their description.
-
-EXISTING TOOLS you may enable (by exact name):
-{catalog_lines}
-
-SOUNDS available to `play`/`loop`:
-{sounds_line}
-
-RMSCRIPT LANGUAGE REFERENCE
-{reference}
-
-{_OUTPUT_SCHEMA}"""
-
+    system = _system_template().render(
+        catalog_lines=catalog_lines,
+        sounds_line=sounds_line,
+        reference=load_rmscript_reference(),
+    )
     user = f"Create a personality for this description:\n\n{description.strip()}"
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
