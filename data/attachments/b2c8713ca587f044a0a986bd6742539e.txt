@@ -1,1 +1,0 @@
-INFO     reachy_mini_conversation_app.tools.camera:camera.py:35 Tool call: camera question=What color is this?

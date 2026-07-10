@@ -1,1 +1,0 @@
-INFO     reachy_mini_conversation_app.tools.play_emotion:play_emotion.py:264 Tool call: play_emotion emotion=sad no

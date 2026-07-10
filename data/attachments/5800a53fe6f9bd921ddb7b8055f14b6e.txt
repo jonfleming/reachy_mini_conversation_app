@@ -1,7 +1,0 @@
-INFO     reachy_mini_conversation_app.tool_spaces:tool_spaces.py:435 Installed Space tool source: example/search-tool
-INFO     reachy_mini_conversation_app.tool_spaces:tool_spaces.py:436 Manifest: /tmp/pytest-of-runner/pytest-0/test_tool_spaces_manifest_uses0/installed_tool_spaces.json
-INFO     reachy_mini_conversation_app.tool_spaces:tool_spaces.py:437 example/search-tool (example_search_tool)
-  MCP endpoint: https://example-search-tool.hf.space/gradio_api/mcp/
-  Tools:
-    - example_search_tool__search_web
-INFO     reachy_mini_conversation_app.tool_spaces:tool_spaces.py:440 Tools installed. Add tool IDs to a profile's tools.txt to enable them.

@@ -1,2 +1,0 @@
-WARNING  reachy_mini_conversation_app.tools.core_tools:core_tools.py:383 Tools enabled from 'example/search-tool' are missing from the install manifest and will be skipped: example_search_tool__search_web. Re-run 'tool-spaces add example/search-tool' to refresh.
-WARNING  reachy_mini_conversation_app.tools.core_tools:core_tools.py:469 ⚠️ Tool 'example_search_tool__search_web' not found in profile or shared tools
