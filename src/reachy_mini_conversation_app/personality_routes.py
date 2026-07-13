@@ -49,14 +49,12 @@ class RouteError(Exception):
         self,
         reason: str,
         *,
-        status: int = 400,
         extra: Optional[dict[str, Any]] = None,
         message: Optional[str] = None,
     ) -> None:
         """Build the error (``reason`` doubles as the message if none given)."""
         super().__init__(message or reason)
         self.reason = reason
-        self.status = status
         self.extra = extra or {}
         self.message = message or reason
 
@@ -130,7 +128,7 @@ class PersonalityOps:
         """Await a coroutine on the LocalStream loop without blocking the caller."""
         loop = self._get_loop()
         if loop is None:
-            raise RouteError("loop_unavailable", status=503)
+            raise RouteError("loop_unavailable")
         fut = asyncio.run_coroutine_threadsafe(coro, loop)
         return await asyncio.wait_for(asyncio.wrap_future(fut), timeout=timeout)
 
@@ -183,7 +181,7 @@ class PersonalityOps:
         try:
             _write_profile(sanitized_name, instructions, tools_text, voice or get_default_voice(), greeting)
         except Exception as e:
-            raise RouteError(str(e), status=500) from e
+            raise RouteError(str(e)) from e
         return {
             "ok": True,
             "value": f"user_personalities/{sanitized_name}",
@@ -194,15 +192,15 @@ class PersonalityOps:
         """Delete a user personality (never the active/startup or a built-in one)."""
         choices = [DEFAULT_OPTION, *list_personalities()]
         if name in (self._current_choice(), self._startup_choice_value()):
-            raise RouteError("profile_in_use", status=409, extra={"choices": choices})
+            raise RouteError("profile_in_use", extra={"choices": choices})
         if not delete_personality(name):
-            raise RouteError("not_deletable", status=404, extra={"choices": choices})
+            raise RouteError("not_deletable", extra={"choices": choices})
         return {"ok": True, "choices": [DEFAULT_OPTION, *list_personalities()]}
 
     async def apply(self, name: str, persist: bool = False) -> dict[str, Any]:
         """Apply a personality (optionally persisting it as the startup choice)."""
         if LOCKED_PROFILE is not None:
-            raise RouteError("profile_locked", status=403, extra={"locked_to": LOCKED_PROFILE})
+            raise RouteError("profile_locked", extra={"locked_to": LOCKED_PROFILE})
         selected_name = name or DEFAULT_OPTION
         persisted_choice = self._startup_choice_value()
 
@@ -234,7 +232,7 @@ class PersonalityOps:
         except RouteError:
             raise
         except Exception as e:
-            raise RouteError(str(e), status=500) from e
+            raise RouteError(str(e)) from e
         _persist_if_asked()
         return {"ok": True, "status": status, "startup": persisted_choice}
 
@@ -278,7 +276,7 @@ class PersonalityOps:
         except RouteError:
             raise
         except Exception as e:
-            raise RouteError(str(e), status=500) from e
+            raise RouteError(str(e)) from e
         return {"ok": True, "status": status}
 
 

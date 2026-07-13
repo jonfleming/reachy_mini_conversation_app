@@ -500,7 +500,6 @@ def test_personality_ops_delete_builtin_is_not_deletable() -> None:
     with pytest.raises(RouteError) as ei:
         ops.delete("mad_scientist_assistant")
     assert ei.value.reason == "not_deletable"
-    assert ei.value.status == 404
 
 
 def test_personality_ops_load_builtin_default_tools() -> None:

@@ -73,7 +73,6 @@ def test_ops_refuses_deleting_current_profile(tmp_path: Path, monkeypatch: pytes
         _ops().delete("user_personalities/live")
 
     assert ei.value.reason == "profile_in_use"
-    assert ei.value.status == 409
     assert (tmp_path / "user_personalities" / "live").is_dir()
 
 
@@ -87,7 +86,6 @@ def test_ops_refuses_deleting_startup_profile(tmp_path: Path, monkeypatch: pytes
         _ops(persisted="user_personalities/boots").delete("user_personalities/boots")
 
     assert ei.value.reason == "profile_in_use"
-    assert ei.value.status == 409
     assert (tmp_path / "user_personalities" / "boots").is_dir()
 
 
@@ -113,4 +111,3 @@ def test_ops_refuses_non_deletable(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         _ops().delete("mad_scientist_assistant")
 
     assert ei.value.reason == "not_deletable"
-    assert ei.value.status == 404
