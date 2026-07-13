@@ -39,10 +39,10 @@ logger = logging.getLogger(__name__)
 
 
 class RouteError(Exception):
-    """A domain error carrying a stable ``reason``, an HTTP status, and extras.
+    """A domain error carrying a stable ``reason`` and extras.
 
-    REST renders it as ``{"ok": false, "error": reason, **extra}`` with
-    ``status``; JSON-RPC renders it as an error with ``data.reason == reason``.
+    Rendered as a JSON-RPC error with ``data.reason == reason`` (and any
+    ``extra`` merged into ``data``).
     """
 
     def __init__(

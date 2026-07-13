@@ -49,18 +49,15 @@ from reachy_mini_conversation_app.conversation_handler import ConversationHandle
 
 try:
     # FastAPI is provided by the Reachy Mini Apps runtime
-    from fastapi import FastAPI, Request, Response
+    from fastapi import FastAPI, Response
     from pydantic import BaseModel
-    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+    from fastapi.responses import FileResponse
     from starlette.staticfiles import StaticFiles
 except Exception:  # pragma: no cover - only loaded when settings_app is used
     FastAPI = object  # type: ignore
     FileResponse = object  # type: ignore
-    JSONResponse = object  # type: ignore
-    StreamingResponse = object  # type: ignore
     StaticFiles = object  # type: ignore
     BaseModel = object  # type: ignore
-    Request = object  # type: ignore
 
 logger = logging.getLogger(__name__)
 
