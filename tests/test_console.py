@@ -1,7 +1,6 @@
 """Tests for the headless console stream."""
 
 import asyncio
-import threading
 from types import SimpleNamespace
 from typing import Any
 from pathlib import Path
@@ -576,7 +575,7 @@ def test_personality_ops_startup_choice_survives_runtime_change(
 
 @pytest.mark.asyncio
 async def test_personality_ops_use_apply_callback() -> None:
-    """apply delegates to the injected apply_personality callback, not the handler."""
+    """Apply delegates to the injected apply_personality callback, not the handler."""
     handler = MagicMock()
     handler.apply_personality = AsyncMock(return_value="handler should not be called")
     apply_personality = AsyncMock(return_value="Applied personality and restarting backend.")
@@ -702,7 +701,7 @@ def test_local_stream_launch_waits_for_missing_hf_target_without_starting_media(
 
 
 def _rpc_robot() -> SimpleNamespace:
-    """A robot mock whose audio pipeline supports clear_audio_queue()."""
+    """Return a robot mock whose audio pipeline supports clear_audio_queue()."""
     audio = SimpleNamespace(clear_player=MagicMock(), clear_output_buffer=MagicMock())
     return SimpleNamespace(media=SimpleNamespace(audio=audio))
 

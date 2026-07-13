@@ -13,8 +13,8 @@ import reachy_mini_conversation_app.personality as personality_mod
 from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.personality import delete_personality
 from reachy_mini_conversation_app.personality_routes import (
-    PersonalityOps,
     RouteError,
+    PersonalityOps,
     build_personality_ops,
 )
 
