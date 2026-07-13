@@ -46,9 +46,7 @@ class ConversationHandler(AsyncStreamHandler, ABC):
         """Attach or detach an activity observer. Pass None to clear."""
         self._activity_observer = observer
 
-    def set_transcript_observer(
-        self, observer: Callable[[str, str, bool], None] | None
-    ) -> None:
+    def set_transcript_observer(self, observer: Callable[[str, str, bool], None] | None) -> None:
         """Attach/detach a transcript observer, called (role, text, final)."""
         self._transcript_observer = observer
 

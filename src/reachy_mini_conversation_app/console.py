@@ -178,9 +178,7 @@ class LocalStream:
         except Exception:
             return
         level = max(0.0, min(1.0, rms * self._LEVEL_GAIN))
-        self._rpc.broadcast_threadsafe(
-            "conversation.level", {"role": role, "rms": round(level, 3)}
-        )
+        self._rpc.broadcast_threadsafe("conversation.level", {"role": role, "rms": round(level, 3)})
 
     # Map backend activity reasons to the orb's turn states (mirrors the old
     # browser orb's mapActivityToState so the orb reliably reaches listening/
