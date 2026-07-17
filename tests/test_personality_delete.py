@@ -14,12 +14,16 @@ from fastapi.testclient import TestClient
 import reachy_mini_conversation_app.personality as personality_mod
 from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.personality import delete_personality
+from reachy_mini_conversation_app.profile_toolsets import (
+    read_profile_tool_override,
+    write_profile_tool_override,
+)
 from reachy_mini_conversation_app.personality_routes import mount_personality_routes
 
 
 def _make_user_profile(name: str) -> None:
     """Create a minimal UI-style profile under the writable user root."""
-    personality_mod._write_profile(name, "Be brief.", "")
+    personality_mod.save_user_personality(name, "Be brief.")
 
 
 def test_delete_removes_user_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,15 +31,17 @@ def test_delete_removes_user_profile(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
     _make_user_profile("doomed")
     profile_dir = tmp_path / "user_personalities" / "doomed"
+    write_profile_tool_override("user_personalities/doomed", ["dance"], tmp_path)
     assert profile_dir.is_dir()
 
     assert delete_personality("user_personalities/doomed") is True
     assert not profile_dir.exists()
+    assert read_profile_tool_override("user_personalities/doomed", tmp_path) is None
 
 
 def test_delete_refuses_builtin_profile(monkeypatch: pytest.MonkeyPatch) -> None:
     """Built-in profiles live outside the user root and must never be deletable."""
-    builtin_dir = personality_mod.resolve_profile_dir("mad_scientist_assistant")
+    builtin_dir = config.resolve_profile_dir("mad_scientist_assistant")
     assert builtin_dir.is_dir()
 
     assert delete_personality("mad_scientist_assistant") is False
@@ -114,3 +120,24 @@ def test_route_returns_404_for_non_deletable(tmp_path: Path, monkeypatch: pytest
 
     assert resp.status_code == 404
     assert resp.json()["error"] == "not_deletable"
+
+
+def test_locked_mode_rejects_profile_creation_and_deletion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A locked app should expose no writable personality endpoint."""
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+    monkeypatch.setattr("reachy_mini_conversation_app.personality_routes.LOCKED_PROFILE", "default")
+    client = _client(monkeypatch)
+
+    save_response = client.post(
+        "/personalities/save",
+        json={"name": "new_profile", "instructions": "Hello."},
+    )
+    delete_response = client.delete("/personalities", params={"name": "user_personalities/old"})
+
+    assert save_response.status_code == 403
+    assert save_response.json()["error"] == "profile_locked"
+    assert delete_response.status_code == 403
+    assert delete_response.json()["error"] == "profile_locked"

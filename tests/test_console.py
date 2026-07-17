@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+import reachy_mini_conversation_app.console as console_mod
 from reachy_mini_conversation_app.config import HF_AVAILABLE_VOICES, config
 from reachy_mini_conversation_app.console import LocalStream
 from reachy_mini_conversation_app.startup_settings import (
@@ -117,6 +118,8 @@ def test_settings_api_uses_versioned_routes_only() -> None:
     assert response.json() == {"muted": True}
     assert stream._mic_muted is True
     assert client.get("/api/v1/status").json()["backend"]
+    assert client.get("/api/v1/tool_spaces").status_code == 200
+    assert client.get("/api/v1/profile_tools").status_code == 200
     assert client.get("/api/v1/ready").status_code == 404
     assert client.get("/status").status_code == 404
     assert client.get("/ready").status_code == 404
@@ -124,6 +127,8 @@ def test_settings_api_uses_versioned_routes_only() -> None:
     assert client.get("/mic").status_code == 404
     assert client.post("/mic", json={"muted": False}).status_code == 404
     assert client.get("/conversation_events").status_code == 404
+    assert client.get("/tool_spaces").status_code == 404
+    assert client.get("/profile_tools").status_code == 404
 
 
 def test_settings_ui_detaches_framework_catch_all_before_api_routes() -> None:
@@ -143,6 +148,8 @@ def test_settings_ui_detaches_framework_catch_all_before_api_routes() -> None:
     assert client.get("/static/js/api.js").status_code == 200
     assert client.get("/api/v1/mic").status_code == 200
     assert client.get("/api/v1/personalities").status_code == 200
+    assert client.get("/api/v1/tool_spaces").status_code == 200
+    assert client.get("/api/v1/profile_tools").status_code == 200
 
 
 @pytest.mark.asyncio
@@ -571,27 +578,26 @@ def test_personality_routes_mount_versioned_paths() -> None:
     assert client.post("/voices/apply?voice=cedar").status_code == 404
 
 
-def test_personality_routes_load_builtin_default_tools() -> None:
-    """Headless personality UI should expose built-in default tools on initial load."""
+def test_personality_routes_load_builtin_default_profile() -> None:
+    """The personality editor should load prompt metadata without tool state."""
     app = FastAPI()
     handler = MagicMock()
     mount_personality_routes(app, handler, lambda: None)
 
     client = TestClient(app)
-    response = client.get("/personalities/load", params={"name": "(built-in default)"})
+    response = client.get("/personalities/load", params={"name": "default"})
 
     assert response.status_code == 200
     data = response.json()
-    assert data["tools_text"]
-    assert "dance" in data["enabled_tools"]
-    assert "camera" in data["enabled_tools"]
+    assert "Reachy Mini" in data["instructions"]
+    assert set(data) == {"instructions", "greeting", "voice"}
 
 
-def test_personality_routes_apply_voice_accepts_query_param() -> None:
-    """Headless personality UI should apply a voice change from a POST query param."""
+def test_personality_routes_apply_voice_accepts_json() -> None:
+    """Voice changes should accept the web payload."""
     app = FastAPI()
     handler = MagicMock()
-    handler.change_voice = AsyncMock(return_value="Voice changed to cedar.")
+    handler.change_voice = AsyncMock(return_value="Voice changed to Aiden.")
 
     loop = asyncio.new_event_loop()
     started = threading.Event()
@@ -609,11 +615,11 @@ def test_personality_routes_apply_voice_accepts_query_param() -> None:
         mount_personality_routes(app, handler, lambda: loop, api_prefix="/api/v1")
 
         client = TestClient(app)
-        response = client.post("/api/v1/voices/apply?voice=cedar")
+        response = client.post("/api/v1/voices/apply", json={"voice": "Aiden"})
 
         assert response.status_code == 200
-        assert response.json() == {"ok": True, "status": "Voice changed to cedar."}
-        handler.change_voice.assert_awaited_once_with("cedar")
+        assert response.json() == {"ok": True, "status": "Voice changed to Aiden."}
+        handler.change_voice.assert_awaited_once_with("Aiden")
     finally:
         loop.call_soon_threadsafe(loop.stop)
         thread.join(timeout=1.0)
@@ -740,11 +746,9 @@ def test_headless_personality_routes_can_use_stream_callbacks() -> None:
 @pytest.mark.asyncio
 async def test_apply_personality_propagates_restart_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cancellation during backend restart should not be converted into a status string."""
-    monkeypatch.setattr("reachy_mini_conversation_app.config.set_custom_profile", lambda _profile: None)
-    monkeypatch.setattr(
-        "reachy_mini_conversation_app.prompts.get_session_instructions", lambda _instance_path=None: "instructions"
-    )
-    monkeypatch.setattr("reachy_mini_conversation_app.prompts.get_session_voice", lambda default: default)
+    monkeypatch.setattr(console_mod, "set_custom_profile", lambda _profile: None)
+    monkeypatch.setattr(console_mod, "get_session_instructions", lambda _instance_path=None: "instructions")
+    monkeypatch.setattr(console_mod, "get_session_voice", lambda default: default)
 
     stream = LocalStream(MagicMock(), MagicMock())
 
@@ -755,6 +759,28 @@ async def test_apply_personality_propagates_restart_cancellation(monkeypatch: py
 
     with pytest.raises(asyncio.CancelledError):
         await stream.apply_personality("sorry_bro")
+
+
+@pytest.mark.asyncio
+async def test_apply_personality_restores_profile_when_tool_initialization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed tool rebuild must not leave the rejected profile selected."""
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", "default")
+    monkeypatch.setattr(
+        console_mod,
+        "set_custom_profile",
+        lambda profile: setattr(config, "REACHY_MINI_CUSTOM_PROFILE", profile),
+    )
+    monkeypatch.setattr(console_mod, "get_session_instructions", lambda: "instructions")
+    monkeypatch.setattr(console_mod, "get_session_voice", lambda default: default)
+    monkeypatch.setattr(console_mod, "initialize_tools", MagicMock(side_effect=RuntimeError("invalid tools")))
+    stream = LocalStream(MagicMock(), MagicMock())
+
+    with pytest.raises(RuntimeError, match="invalid tools"):
+        await stream.apply_personality("broken")
+
+    assert config.REACHY_MINI_CUSTOM_PROFILE == "default"
 
 
 @pytest.mark.asyncio

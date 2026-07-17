@@ -1,0 +1,231 @@
+"""Tests for personality editing routes."""
+
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config
+from reachy_mini_conversation_app.profile_store import (
+    write_profile,
+    read_profile_from_directory,
+    read_packaged_default_profile,
+)
+from reachy_mini_conversation_app.profile_toolsets import (
+    read_profile_tool_override,
+    write_profile_tool_override,
+)
+from reachy_mini_conversation_app.personality_routes import mount_personality_routes
+from reachy_mini_conversation_app.profile_tool_routes import mount_profile_tool_routes
+
+
+def _client() -> TestClient:
+    app = FastAPI()
+    mount_personality_routes(app, MagicMock(), lambda: None)
+    return TestClient(app)
+
+
+def test_new_personality_inherits_packaged_default_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Creating a personality should start from the bundled tool baseline."""
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+
+    response = _client().post(
+        "/personalities/save",
+        json={"name": "guide", "instructions": "Be a concise guide.", "greeting": "Hello there."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["value"] == "user_personalities/guide"
+    assert "user_personalities/guide" in response.json()["choices"]
+    profile = read_profile_from_directory("guide", tmp_path / "user_personalities" / "guide")
+    assert profile.instructions == "Be a concise guide."
+    assert profile.greeting == "Hello there."
+    assert profile.voice == "Aiden"
+    assert profile.default_tools == read_packaged_default_profile().default_tools
+    loaded = _client().get("/personalities/load", params={"name": "user_personalities/guide"})
+    assert loaded.status_code == 200
+    assert loaded.json() == {
+        "instructions": "Be a concise guide.",
+        "greeting": "Hello there.",
+        "voice": "Aiden",
+    }
+
+
+def test_personality_creation_does_not_overwrite_existing_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Creating a duplicate personality should preserve the existing profile."""
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+    client = _client()
+    first = client.post("/personalities/save", json={"name": "guide", "instructions": "Original."})
+
+    duplicate = client.post("/personalities/save", json={"name": "guide", "instructions": "Replacement."})
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"] == "profile_exists"
+    profile = read_profile_from_directory("guide", tmp_path / "user_personalities" / "guide")
+    assert profile.instructions == "Original."
+
+
+def test_personality_save_rejects_blank_instructions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty instructions should be a client error, not a failed storage write."""
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+
+    response = _client().post(
+        "/personalities/save",
+        json={"name": "guide", "instructions": "   "},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_instructions"
+    assert not (tmp_path / "user_personalities" / "guide").exists()
+
+
+def test_personality_save_rejects_unsafe_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The web API should enforce the same safe names as headless creation."""
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+
+    response = _client().post(
+        "/personalities/save",
+        json={"name": "../guide", "instructions": "Unsafe."},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_name"
+    assert not (tmp_path / "guide").exists()
+
+
+def test_editing_personality_preserves_tool_defaults_and_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prompt edits must not change either layer of personality tool access."""
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+    profile_directory = tmp_path / "user_personalities" / "guide"
+    write_profile("guide", profile_directory, "Old instructions.", ["dance"])
+    write_profile_tool_override("user_personalities/guide", ["camera"], tmp_path)
+
+    response = _client().post(
+        "/personalities/save",
+        json={
+            "name": "guide",
+            "instructions": "New instructions.",
+            "greeting": "Hello there.",
+            "overwrite": True,
+        },
+    )
+
+    assert response.status_code == 200
+    profile = read_profile_from_directory("guide", profile_directory)
+    assert profile.instructions == "New instructions."
+    assert profile.greeting == "Hello there."
+    assert profile.default_tools == ("dance",)
+    assert read_profile_tool_override("user_personalities/guide", tmp_path) == ["camera"]
+
+
+def test_external_profiles_keep_canonical_packaged_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default choice should remain available without an external default directory."""
+    external_profiles_root = tmp_path / "external_profiles"
+    write_profile("guide", external_profiles_root / "guide", "Be a guide.", ["dance"])
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path / "instance")
+    monkeypatch.setattr(config, "PROFILES_DIRECTORY", external_profiles_root)
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+
+    client = _client()
+    listing = client.get("/personalities")
+    loaded = client.get("/personalities/load", params={"name": "default"})
+
+    assert listing.status_code == 200
+    assert listing.json()["choices"] == ["default", "guide"]
+    assert listing.json()["current"] == "default"
+    assert listing.json()["startup"] == "default"
+    assert loaded.status_code == 200
+    assert "Reachy Mini" in loaded.json()["instructions"]
+    assert set(loaded.json()) == {"instructions", "greeting", "voice"}
+    assert not (external_profiles_root / "default").exists()
+
+
+def test_profile_load_failure_is_not_returned_as_editable_content() -> None:
+    """Missing profile content should produce a proper API error."""
+    response = _client().get("/personalities/load", params={"name": "missing"})
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "profile_unavailable"
+    assert "instructions" not in response.json()
+
+
+def test_applying_default_persists_runtime_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The canonical default ID should map to no custom runtime profile."""
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+    app = FastAPI()
+    handler = MagicMock()
+    handler.get_current_voice.return_value = "Aiden"
+    persist_personality = MagicMock()
+    mount_personality_routes(
+        app,
+        handler,
+        lambda: None,
+        persist_personality=persist_personality,
+    )
+
+    response = TestClient(app).post("/personalities/apply", json={"name": "default", "persist": True})
+
+    assert response.status_code == 200
+    assert response.json()["startup"] == "default"
+    persist_personality.assert_called_once_with(None, "Aiden")
+
+
+def test_external_tools_are_available_without_autoload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Autoload should not control whether an external tool can be selected."""
+    external_tools_root = tmp_path / "external_tools"
+    external_tools_root.mkdir()
+    (external_tools_root / "ext_ping.py").write_text("# selectable external tool\n", encoding="utf-8")
+    (external_tools_root / "_private.py").write_text("# ignored\n", encoding="utf-8")
+    (external_tools_root / "bad-name.py").write_text("# ignored\n", encoding="utf-8")
+    monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
+    monkeypatch.setattr(config, "PROFILES_DIRECTORY", DEFAULT_PROFILES_DIRECTORY)
+    monkeypatch.setattr(config, "REACHY_MINI_CUSTOM_PROFILE", None)
+    monkeypatch.setattr(config, "TOOLS_DIRECTORY", external_tools_root)
+    monkeypatch.setattr(config, "AUTOLOAD_EXTERNAL_TOOLS", False)
+    app = FastAPI()
+    mount_profile_tool_routes(
+        app,
+        lambda: None,
+        AsyncMock(),
+        instance_path=tmp_path,
+        api_prefix="/api/v1",
+    )
+
+    response = TestClient(app).get("/api/v1/profile_tools", params={"profile": "default"})
+
+    assert response.status_code == 200
+    external_tools = [tool for tool in response.json()["available_tools"] if tool["kind"] == "external"]
+    assert external_tools == [
+        {
+            "id": "ext_ping",
+            "kind": "external",
+            "source": "External",
+            "description": "",
+        }
+    ]

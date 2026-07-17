@@ -1,0 +1,120 @@
+"""Tests for instance-local personality tool selections."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+import reachy_mini_conversation_app.profile_store as profile_store_mod
+from reachy_mini_conversation_app.config import config
+from reachy_mini_conversation_app.profile_store import write_profile
+from reachy_mini_conversation_app.profile_toolsets import (
+    enable_profile_tools,
+    read_profile_toolsets,
+    read_profile_tool_names,
+    get_profile_toolsets_path,
+    read_profile_tool_override,
+    clear_profile_tool_override,
+    write_profile_tool_override,
+    disable_profile_tools_by_prefix,
+)
+
+
+SPACE_ALIAS = "example_search_tool"
+TOOL_NAME = f"{SPACE_ALIAS}__search_web"
+
+
+@pytest.fixture
+def configured_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Configure two strict profile documents and return their instance path."""
+    instance_path = tmp_path / "instance"
+    profiles_root = tmp_path / "profiles"
+    write_profile("default", profiles_root / "default", "Default profile.", ["dance", TOOL_NAME])
+    write_profile(
+        "guide",
+        profiles_root / "guide",
+        "Guide profile.",
+        ["camera", TOOL_NAME, "other_space__lookup"],
+    )
+    monkeypatch.setattr(config, "INSTANCE_PATH", instance_path)
+    monkeypatch.setattr(config, "PROFILES_DIRECTORY", profiles_root)
+    monkeypatch.setattr(profile_store_mod, "DEFAULT_PROFILES_DIRECTORY", profiles_root)
+    return instance_path
+
+
+def test_profile_tool_override_round_trip_and_reset(configured_profiles: Path) -> None:
+    """An explicit override should replace authored defaults until it is reset."""
+    instance_path = configured_profiles
+    assert read_profile_tool_names("guide", instance_path) == ["camera", TOOL_NAME, "other_space__lookup"]
+    assert read_profile_tool_override("guide", instance_path) is None
+
+    settings_path = write_profile_tool_override(
+        "guide",
+        [" camera ", "# disabled", "", "camera", "other_space__lookup"],
+        instance_path,
+    )
+
+    assert settings_path == get_profile_toolsets_path(instance_path)
+    assert read_profile_tool_override("guide", instance_path) == ["camera", "other_space__lookup"]
+    assert read_profile_tool_names("guide", instance_path) == ["camera", "other_space__lookup"]
+
+    write_profile_tool_override("guide", [], instance_path)
+
+    assert read_profile_tool_override("guide", instance_path) == []
+    assert read_profile_tool_names("guide", instance_path) == []
+    assert clear_profile_tool_override("guide", instance_path) is True
+    assert read_profile_tool_override("guide", instance_path) is None
+    assert read_profile_tool_names("guide", instance_path) == ["camera", TOOL_NAME, "other_space__lookup"]
+    assert not settings_path.exists()
+    assert clear_profile_tool_override("guide", instance_path) is False
+
+
+def test_default_profile_uses_canonical_storage_key(configured_profiles: Path) -> None:
+    """An empty runtime selection should use the canonical default override."""
+    instance_path = configured_profiles
+
+    write_profile_tool_override(None, ["dance"], instance_path)
+
+    assert read_profile_tool_override("default", instance_path) == ["dance"]
+    assert read_profile_toolsets(instance_path).profiles == {"default": ["dance"]}
+
+
+def test_enabling_an_authored_default_does_not_create_an_override(configured_profiles: Path) -> None:
+    """Re-enabling an existing default should leave the profile in default mode."""
+    instance_path = configured_profiles
+
+    assert enable_profile_tools("default", ["dance"], instance_path) == []
+    assert read_profile_tool_override("default", instance_path) is None
+    assert not get_profile_toolsets_path(instance_path).exists()
+
+
+def test_disabling_space_tools_preserves_other_tools_for_every_profile(configured_profiles: Path) -> None:
+    """Space removal should create tombstones for matching authored defaults in all profiles."""
+    instance_path = configured_profiles
+
+    disabled = disable_profile_tools_by_prefix(
+        ["default", "guide", "default"],
+        f"{SPACE_ALIAS}__",
+        instance_path,
+    )
+
+    assert disabled == [
+        ("default", [TOOL_NAME]),
+        ("guide", [TOOL_NAME]),
+    ]
+    assert read_profile_tool_names("default", instance_path) == ["dance"]
+    assert read_profile_tool_names("guide", instance_path) == ["camera", "other_space__lookup"]
+    assert read_profile_tool_override("default", instance_path) == ["dance"]
+    assert read_profile_tool_override("guide", instance_path) == ["camera", "other_space__lookup"]
+
+
+def test_read_profile_toolsets_rejects_non_list_tool_selection(tmp_path: Path) -> None:
+    """Malformed persisted profile selections should fail rather than change their meaning."""
+    settings_path = get_profile_toolsets_path(tmp_path)
+    settings_path.write_text(
+        json.dumps({"version": 1, "profiles": {"guide": "camera"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="profile names and tool lists must be strings"):
+        read_profile_toolsets(tmp_path)

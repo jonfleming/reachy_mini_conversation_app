@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import reachy_mini_conversation_app.config as config_mod
+from reachy_mini_conversation_app.profile_store import write_profile
 
 
 def _reload_core_tools() -> ModuleType:
@@ -15,7 +16,6 @@ def _reload_core_tools() -> ModuleType:
             sys.modules.pop(module_name, None)
     # External file-loaded modules are registered by bare tool name.
     sys.modules.pop("ext_ping", None)
-    sys.modules.pop("sweep_look", None)
     sys.modules.pop("ext_dup_a", None)
     sys.modules.pop("ext_dup_b", None)
 
@@ -26,13 +26,11 @@ def _reload_core_tools() -> ModuleType:
 
 
 def test_external_profile_can_use_builtin_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """External profile tools.txt can reference built-in src tools."""
+    """External profile defaults can reference shared application tools."""
     profile_name = "ext_profile_test"
     external_profiles_root = tmp_path / "external_profiles"
     profile_dir = external_profiles_root / profile_name
-    profile_dir.mkdir(parents=True)
-    (profile_dir / "instructions.txt").write_text("hello\n", encoding="utf-8")
-    (profile_dir / "tools.txt").write_text("dance\n", encoding="utf-8")
+    write_profile(profile_name, profile_dir, "hello", ["dance"])
 
     monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", profile_name)
     monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", external_profiles_root)
@@ -43,6 +41,42 @@ def test_external_profile_can_use_builtin_tools(tmp_path: Path, monkeypatch: pyt
 
     assert "dance" in core_tools_mod.ALL_TOOLS
     assert "dance" not in sys.modules
+
+
+def test_packaged_default_tools_load_with_external_profiles_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No active external profile should retain the packaged default toolset."""
+    external_profiles_root = tmp_path / "external_profiles"
+    write_profile("guide", external_profiles_root / "guide", "Guide.", ["dance"])
+
+    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", None)
+    monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", external_profiles_root)
+    monkeypatch.setattr(config_mod.config, "TOOLS_DIRECTORY", None)
+    monkeypatch.setattr(config_mod.config, "AUTOLOAD_EXTERNAL_TOOLS", False)
+
+    core_tools_mod = _reload_core_tools()
+
+    assert not (external_profiles_root / "default").exists()
+    assert "sweep_look" in core_tools_mod.ALL_TOOLS
+
+
+def test_missing_profile_raises_runtime_error_instead_of_exiting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Library callers should receive a catchable initialization failure."""
+    external_profiles_root = tmp_path / "external_profiles"
+    external_profiles_root.mkdir()
+
+    monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", "missing")
+    monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", external_profiles_root)
+    monkeypatch.setattr(config_mod.config, "TOOLS_DIRECTORY", None)
+    monkeypatch.setattr(config_mod.config, "AUTOLOAD_EXTERNAL_TOOLS", False)
+
+    with pytest.raises(RuntimeError, match="Failed to read tools for profile 'missing'"):
+        _reload_core_tools()
 
 
 def test_external_tools_can_be_loaded_without_external_profile(
@@ -113,10 +147,10 @@ def test_external_tools_fail_on_duplicate_tool_names(tmp_path: Path, monkeypatch
         _reload_core_tools()
 
 
-def test_builtin_profile_can_load_profile_local_tools(
+def test_builtin_profile_can_load_shared_sweep_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Built-in profile-local tools should load from the packaged profiles root."""
+    """A built-in profile can enable the shared sweep tool from its profile document."""
     monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", "default")
     monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", config_mod.DEFAULT_PROFILES_DIRECTORY)
     monkeypatch.setattr(config_mod.config, "TOOLS_DIRECTORY", None)
@@ -150,10 +184,10 @@ def test_tool_registry_reloads_when_profile_changes(monkeypatch: pytest.MonkeyPa
     assert "sweep_look" not in core_tools_mod.ALL_TOOLS
 
 
-def test_forced_tool_registry_reload_does_not_duplicate_profile_local_tool(
+def test_forced_tool_registry_reload_does_not_duplicate_shared_tool(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Reloading a profile-local tool should ignore stale class objects from the previous load."""
+    """Reloading the registry should not duplicate an already imported shared tool."""
     monkeypatch.setattr(config_mod.config, "REACHY_MINI_CUSTOM_PROFILE", "default")
     monkeypatch.setattr(config_mod.config, "PROFILES_DIRECTORY", config_mod.DEFAULT_PROFILES_DIRECTORY)
     monkeypatch.setattr(config_mod.config, "TOOLS_DIRECTORY", None)
