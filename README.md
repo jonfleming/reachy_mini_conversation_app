@@ -67,15 +67,15 @@ source .venv/bin/activate
 uv sync
 ```
 
-> [!NOTE]
-> Run `uv sync --frozen` to install the exact dependency set from `uv.lock` without re-resolving versions.
-
 Include dev dependencies:
 ```bash
 uv sync --group dev
 ```
 
 </details>
+
+> [!NOTE]
+> Run `uv sync --frozen` to install the exact dependency set from `uv.lock` without re-resolving versions.
 
 <details>
 <summary>Using pip</summary>
