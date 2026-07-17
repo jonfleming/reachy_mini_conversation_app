@@ -1,5 +1,6 @@
 """Tests for the headless console stream."""
 
+import time
 import asyncio
 import threading
 from types import SimpleNamespace
@@ -841,3 +842,53 @@ def test_local_stream_launch_waits_for_missing_hf_target_without_starting_media(
     init_settings_ui.assert_called_once()
     media.start_recording.assert_not_called()
     media.start_playing.assert_not_called()
+
+
+def _bare_stream() -> LocalStream:
+    """Return a LocalStream with a no-audio robot, enough for helper-method tests."""
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    return LocalStream(MagicMock(), robot)
+
+
+def test_read_env_lines_prefers_existing_file(tmp_path: Path) -> None:
+    """An existing .env is read verbatim, ignoring the template."""
+    env_path = tmp_path / ".env"
+    env_path.write_text("A=1\nB=2\n", encoding="utf-8")
+
+    assert _bare_stream()._read_env_lines(env_path) == ["A=1", "B=2"]
+
+
+def test_read_env_lines_falls_back_to_example_template(tmp_path: Path) -> None:
+    """When no .env exists, the sibling .env.example is used as the template."""
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=\n", encoding="utf-8")
+
+    assert _bare_stream()._read_env_lines(tmp_path / ".env") == ["OPENAI_API_KEY="]
+
+
+def test_seconds_since_activity_reads_handler() -> None:
+    """seconds_since_activity is measured from the handler's last activity time."""
+    stream = _bare_stream()
+    stream.handler.last_activity_time = time.monotonic() - 5.0
+
+    assert stream.seconds_since_activity() >= 5.0
+
+
+def test_get_current_voice_prefers_override() -> None:
+    """A manual voice override wins over the profile voice."""
+    stream = _bare_stream()
+    stream._voice_override = "Serena"
+
+    assert stream.get_current_voice() == "Serena"
+
+
+@pytest.mark.asyncio
+async def test_change_voice_reports_handler_failure() -> None:
+    """A failing handler voice change is surfaced as an error string, not raised."""
+    handler = MagicMock()
+    handler.change_voice = AsyncMock(side_effect=RuntimeError("backend down"))
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(handler, robot)
+
+    result = await stream.change_voice("Serena")
+
+    assert "Failed to change voice" in result
