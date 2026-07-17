@@ -1,6 +1,7 @@
 /** HTTP client for all calls to the settings backend. */
 
 const DEFAULT_TIMEOUT_MS = 8000;
+const TOOL_SPACE_TIMEOUT_MS = 60000;
 export const API_PREFIX = "/api/v1";
 
 class HttpError extends Error {
@@ -34,6 +35,11 @@ async function request(method, url, { body, timeoutMs = DEFAULT_TIMEOUT_MS } = {
       throw new HttpError(response.status, json, json?.error || response.statusText);
     }
     return json;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Request timed out.");
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -84,6 +90,29 @@ export const getCurrentVoice = () => request("GET", `${API_PREFIX}/voices/curren
 export const applyVoice = (voice) =>
   request("POST", `${API_PREFIX}/voices/apply`, { body: { voice } });
 
+export const listToolSpaces = () => request("GET", `${API_PREFIX}/tool_spaces`);
+export const addToolSpace = (slug) =>
+  request("POST", `${API_PREFIX}/tool_spaces`, {
+    body: { slug },
+    timeoutMs: TOOL_SPACE_TIMEOUT_MS,
+  });
+export const removeToolSpace = (slug) =>
+  request("DELETE", `${API_PREFIX}/tool_spaces?slug=${encodeURIComponent(slug)}`, {
+    timeoutMs: TOOL_SPACE_TIMEOUT_MS,
+  });
+
+export const getProfileTools = (profile) =>
+  request(
+    "GET",
+    `${API_PREFIX}/profile_tools${profile ? `?profile=${encodeURIComponent(profile)}` : ""}`
+  );
+export const saveProfileTools = (profile, enabledTools) =>
+  request("PUT", `${API_PREFIX}/profile_tools`, {
+    body: { profile, enabled_tools: enabledTools },
+  });
+export const resetProfileTools = (profile) =>
+  request("DELETE", `${API_PREFIX}/profile_tools?profile=${encodeURIComponent(profile)}`);
+
 /** Backend error codes that need friendlier copy than the raw code. */
 const ERROR_MESSAGES = Object.freeze({
   invalid_backend: "Unknown backend selected.",
@@ -94,15 +123,21 @@ const ERROR_MESSAGES = Object.freeze({
   invalid_hf_mode: "Unknown Hugging Face mode.",
   missing_hf_session_url: "Couldn't reach the Hugging Face Space. Check it's running.",
   invalid_name: "Enter a valid profile name.",
+  invalid_instructions: "Enter personality instructions.",
+  profile_exists: "A personality with this name already exists.",
+  invalid_tool_space_slug: "Enter a Space in owner/name format.",
+  invalid_tool_selection: "One or more selected tools are no longer available.",
+  unknown_profile: "That personality is no longer available.",
   missing_voice: "Choose a voice first.",
   profile_locked: "Profile switching is locked by the administrator.",
   profile_in_use: "This personality is active or set to load at startup. Switch to another one first.",
   not_deletable: "This personality can't be deleted.",
   loop_unavailable: "Reachy is still starting up. Try again in a moment.",
+  tool_space_not_installed: "That Tool Space is no longer installed.",
 });
 
 /** Map a thrown error to user-facing copy, falling back to its raw message. */
 export function describeError(error) {
   const code = error?.body?.error;
-  return ERROR_MESSAGES[code] || error?.message || String(error);
+  return ERROR_MESSAGES[code] || error?.body?.detail || error?.message || String(error);
 }
