@@ -19,6 +19,7 @@ Conversational app for the Reachy Mini robot combining realtime voice, vision, p
 ![Reachy Mini Dance](docs/assets/reachy_mini_dance.gif)
 
 ## Table of contents
+
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Installation](#installation)
@@ -30,14 +31,15 @@ Conversational app for the Reachy Mini robot combining realtime voice, vision, p
 - [License](#license)
 
 ## Overview
-- Real-time audio conversation loop for low-latency streaming, powered by the **Hugging Face** realtime backend using the built-in Hugging Face server or your own local endpoint.
+
+- Low-latency audio conversation through the Hugging Face realtime backend, using the built-in server or a local endpoint.
 - Vision is handled by the realtime backend when the `camera` tool is used.
 - Layered motion system queues primary moves (dances, emotions, goto poses, breathing) while blending speech-reactive wobble.
-- Async tool dispatch integrates robot motion, camera capture, and MCP Tool Spaces. The optional web UI (`--ui`) provides conversation controls, personalities, per-profile tool access, and runtime settings.
+- Async tools integrate motion, camera capture, and MCP Tool Spaces. The optional web UI (`--ui`) manages conversations, personalities, tools, and settings.
 
 ## Architecture
 
-The app follows a layered architecture connecting the user, AI services, and robot hardware:
+The app connects the user, AI services, and robot hardware:
 
 <p align="center">
   <img src="docs/assets/conversation_app_arch.svg" alt="Architecture Diagram" width="600"/>
@@ -46,13 +48,13 @@ The app follows a layered architecture connecting the user, AI services, and rob
 ## Installation
 
 > [!IMPORTANT]
-> Before using this app, you need to install [Reachy Mini's SDK](https://github.com/pollen-robotics/reachy_mini/).<br>
+> Install [Reachy Mini's SDK](https://github.com/pollen-robotics/reachy_mini/) before using this app.<br>
 > Windows support is currently experimental and has not been extensively tested. Use with caution.
 
 <details open>
-<summary><b>Using uv (recommended)</b></summary>
+<summary>Using uv (recommended)</summary>
 
-Set up the project quickly using [uv](https://docs.astral.sh/uv/):
+Set up with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 # macOS (Homebrew)
@@ -65,7 +67,8 @@ source .venv/bin/activate
 uv sync
 ```
 
-> **Note:** To reproduce the exact dependency set from this repo's `uv.lock`, run `uv sync --frozen`. This ensures `uv` installs directly from the lockfile without re-resolving or updating any versions.
+> [!NOTE]
+> Run `uv sync --frozen` to install the exact dependency set from `uv.lock` without re-resolving versions.
 
 Include dev dependencies:
 ```bash
@@ -75,7 +78,7 @@ uv sync --group dev
 </details>
 
 <details>
-<summary><b>Using pip</b></summary>
+<summary>Using pip</summary>
 
 ```bash
 python -m venv .venv
@@ -83,18 +86,12 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-**Install dev dependencies:**
+Install dev dependencies:
 ```bash
 pip install -e .[dev]                   # Development tools
 ```
 
 </details>
-
-### Dependency groups
-
-| Group | Purpose | Notes |
-|-------|---------|-------|
-| `dev` | Developer tooling (`pytest`, `ruff`, `mypy`) | Development-only dependencies. Use `--group dev` with uv or `[dev]` with pip. |
 
 ## Configuration
 
@@ -160,7 +157,7 @@ reachy-mini-conversation-app
 > [!TIP]
 > Make sure the Reachy Mini daemon is running before launching the app. If you see a `TimeoutError`, it means the daemon isn't started. See [Reachy Mini's SDK](https://github.com/pollen-robotics/reachy_mini/) for setup instructions.
 
-The app runs in console mode by default. Add `--ui` to also serve a web UI at http://127.0.0.1:7860/ for picking a personality, controlling the mic, and changing settings. All options are described in the CLI table below.
+The app runs in console mode. Add `--ui` to serve the web interface at http://127.0.0.1:7860/.
 
 ### CLI options
 
@@ -183,7 +180,7 @@ reachy-mini-conversation-app --ui
 
 ## LLM tools exposed to the assistant
 
-The default profile exposes these tools. The top-bar **Tools** view lets you customize the enabled set for any profile under **Tool access**.
+The default profile exposes these tools. Use Tools → Tool access to customize any profile.
 Every bundled profile enables `head_tracking` by default; users can still disable it per personality.
 
 | Tool | Action | Dependencies |
@@ -210,17 +207,16 @@ Every bundled profile enables `head_tracking` by default; users can still disabl
 ## Advanced features
 
 Built-in motion content is published as open Hugging Face datasets:
+
 - Emotions: [`pollen-robotics/reachy-mini-emotions-library`](https://huggingface.co/datasets/pollen-robotics/reachy-mini-emotions-library)
 - Dances: [`pollen-robotics/reachy-mini-dances-library`](https://huggingface.co/datasets/pollen-robotics/reachy-mini-dances-library)
 
 <details>
-<summary><b>Custom profiles</b></summary>
+<summary>Custom profiles</summary>
 
 Create custom profiles with dedicated instructions and per-profile tool access.
 
-For normal usage, select a profile from the UI and save it for startup. That selection is persisted in `startup_settings.json`.
-
-If no startup settings have been saved yet, you can still seed startup from the environment with `REACHY_MINI_CUSTOM_PROFILE=<name>` to load `profiles/<name>/`. If neither is set, the `default` profile is used.
+Select and save a startup profile in the UI. The choice is stored in `startup_settings.json`. Before one is saved, `REACHY_MINI_CUSTOM_PROFILE=<name>` can select `profiles/<name>/`; otherwise the app uses `default`.
 
 Every profile directory contains one strict schema-version-1 `profile.md`. TOML metadata is enclosed by `+++`; the remaining Markdown body is the realtime assistant prompt:
 
@@ -242,44 +238,44 @@ default_tools = [
 You are a concise, friendly robot guide.
 ```
 
-`schema_version` and `default_tools` are required. `voice`, `greeting`, and `hidden` are optional; `hidden = true` keeps a profile out of the UI. The Markdown body must not be empty. An empty `default_tools` list is valid and does not inherit tools from another profile.
+`schema_version`, `default_tools`, and a non-empty Markdown body are required. `voice`, `greeting`, and `hidden` are optional. Set `hidden = true` to omit a profile from the UI. An empty `default_tools` list is valid and inherits nothing.
 
-`default_tools` is the authored baseline. **Tools → Tool access** stores per-profile selections in instance-local `profile_toolsets.json`, leaving bundled profiles unchanged. Restoring defaults removes that profile's override. Saving the active profile reconnects the conversation; changes to another profile apply when it is selected.
+`default_tools` is the authored baseline. Tools → Tool access stores overrides in instance-local `profile_toolsets.json` without changing bundled profiles. Restoring defaults removes the override. Active-profile changes reconnect the conversation; other changes apply when selected.
 
 Profile directories are data-only. Python tool implementations belong in `src/reachy_mini_conversation_app/tools/`, or in `REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY` for external tools. Each enabled tool ID must resolve to a shared tool, an external tool, or a tool from an installed Hugging Face Space.
 
-**Edit personalities from the UI:**
+To manage personalities in the UI:
 
-When running with `--ui`, the Home view lists available profiles (folders under `profiles/`) plus the built-in default:
+With `--ui`, Home lists the available profiles and the built-in default:
+
 - Tap a card to apply that personality and start talking.
 - Tap "Manage tools" on a saved personality to open its tool access directly.
-- Tap "Custom" to create a personality with a name, instructions, and an optional greeting. New personalities inherit the bundled default tool set and can then be customized under "Manage tools". Managed app instances store the profile at `user_personalities/<name>/profile.md`; standalone runs use `external_content/user_personalities/<name>/profile.md`.
+- Tap "Custom" to create a personality with a name, instructions, and optional greeting. It inherits the default tools, which can be changed under "Manage tools". Managed instances store it at `user_personalities/<name>/profile.md`; standalone runs use `external_content/user_personalities/<name>/profile.md`.
 
 Switching a personality reloads its prompt and effective tools through a quick backend reconnect. Editing `profile.md` directly requires re-selecting the profile or restarting the app.
 
 </details>
 
 <details>
-<summary><b>Locked profile mode</b></summary>
+<summary>Locked profile mode</summary>
 
 To create a locked variant of the app that cannot switch profiles, edit `src/reachy_mini_conversation_app/config.py` and set the `LOCKED_PROFILE` constant to the desired profile name:
 ```python
 LOCKED_PROFILE: str | None = "mars_rover"  # Lock to this profile
 ```
-When `LOCKED_PROFILE` is set, the app always uses that profile, ignoring saved startup settings, `REACHY_MINI_CUSTOM_PROFILE`, and the web UI. The UI shows "(locked)" and disables all profile editing controls.
-This is useful for creating dedicated clones of the app with a fixed personality. Clone scripts can simply edit this constant to lock the variant.
+When set, the app ignores saved startup settings, `REACHY_MINI_CUSTOM_PROFILE`, and UI selection. The UI marks the profile as locked and disables editing.
 
 </details>
 
 <details>
-<summary><b>External profiles and tools</b></summary>
+<summary>External profiles and tools</summary>
 
 You can extend the app with profiles/tools stored outside the repository defaults.
 
 - Core profiles are under `profiles/`.
 - Core tools are under `src/reachy_mini_conversation_app/tools/`.
 
-**Recommended layout:**
+Recommended layout:
 
 ```text
 external_content/
@@ -295,7 +291,7 @@ external_content/
 └── profile_toolsets.json
 ```
 
-**Environment variables:**
+Environment variables:
 
 Set these values in your `.env` when you want env-driven external profile/tool selection:
 
@@ -308,27 +304,23 @@ REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY=./external_content/external_tools
 # AUTOLOAD_EXTERNAL_TOOLS=1
 ```
 
-**Loading behavior:**
+Loading rules:
 
-- **Strict profiles**: each profile directory must contain a valid schema-version-1 `profile.md`. Its `default_tools` list is explicit; there is no cross-profile fallback.
-- **Default mode**: every enabled tool ID must resolve to a shared tool (`src/reachy_mini_conversation_app/tools/`), an external tool module, or an installed Tool Space tool.
-- **Convenience mode** (`AUTOLOAD_EXTERNAL_TOOLS=1`): all valid `*.py` tool files in `REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY` are auto-added.
-- **Web UI**: external modules appear under **Tools → Tool access** and can be enabled per profile. The UI grants access; it does not upload or edit Python code.
-- **Profile separation**: Python modules are never loaded from profile directories; place external implementations under `REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY`.
-- **Duplicate safety**: every loaded tool class must expose a unique `Tool.name`. The app fails fast if two implementations claim the same name.
-
-This supports both:
-1. Local external tools used with built-in/default profile.
-2. Local external profiles with their own explicit tool defaults.
+- Profiles: each directory requires a schema-version-1 `profile.md` with explicit `default_tools`; there is no cross-profile fallback.
+- Default mode: enabled IDs must resolve to a shared, external, or installed Tool Space tool.
+- Autoload: `AUTOLOAD_EXTERNAL_TOOLS=1` adds every valid `*.py` module from `REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY`.
+- Web UI: Tools → Tool access enables external modules per profile; it does not upload or edit Python.
+- Separation: profile directories contain data only; external Python belongs in `REACHY_MINI_EXTERNAL_TOOLS_DIRECTORY`.
+- Tool names: every loaded class needs a unique `Tool.name`; duplicates fail fast.
 
 </details>
 
 <details>
-<summary><b>Hugging Face Space tools</b></summary>
+<summary>Hugging Face Space tools</summary>
 
 You can install MCP-compatible Hugging Face Spaces as remote tool sources for this app. Private Spaces work too, as long as `HF_TOKEN` is set (or you have run `hf auth login`) for an account that can access them.
 
-Installing a Space and granting access are separate operations. In the web UI, Tools → Tool Spaces installs or refreshes the global tool source. Its discovered tools then appear under Tools → Tool access, where they can be enabled independently for each profile. Removing a Space removes its tools from every profile. Saving access for the active profile reconnects the conversation; inactive profiles use the change when next selected.
+Tools → Tool Spaces installs or refreshes a global source. Its tools then appear under Tools → Tool access for per-profile selection. Removing a Space removes its tools from every profile. Active-profile changes reconnect the conversation; other changes apply when selected.
 
 ```bash
 # install + enable in active profile
@@ -347,19 +339,19 @@ reachy-mini-conversation-app tool-spaces list
 reachy-mini-conversation-app tool-spaces remove owner/space-name
 ```
 
-The bundled Pollen Spaces are installed from static specs and enabled by the default profile. Adding or refreshing a custom Space validates it through the Hugging Face Hub and discovers its standard MCP endpoint, sending the HF token only to private Spaces. The resulting tool metadata is cached in:
+Bundled Pollen Spaces use static specs and are enabled by the default profile. Custom Spaces are validated through the Hugging Face Hub; HF tokens are sent only to private Spaces. Tool metadata is cached in:
 
 - `installed_tool_spaces.json` in the managed app instance directory
 - `external_content/installed_tool_spaces.json` in terminal mode
 
-Startup, profile switching, and tool-registry rebuilds read this cache without Hugging Face discovery or MCP probing. Network access is used when installing or refreshing a Space and when an enabled remote tool is invoked. Per-profile access is stored separately in `profile_toolsets.json` in the same managed instance directory, or under `external_content/` in terminal mode.
+Startup and profile switching read this cache without discovery or MCP probing. Network access occurs only during install, refresh, or remote tool calls. Per-profile access is stored in `profile_toolsets.json` beside the manifest, or under `external_content/` in terminal mode.
 
 Recommended tags for discoverability on Hugging Face:
 
 - `reachy-mini-tool`
 - `mcp`
 
-These tags are advisory only. Installation still relies on successful MCP validation, not on tag presence.
+Tags are advisory; installation still requires successful MCP validation.
 
 > [!NOTE]
 > Preinstalled Pollen Spaces can be removed like any other (`tool-spaces remove pollen-robotics/reachy-mini-weather-tool`). To restore access, reinstall the Space and restore or update the relevant profile under "Tool access".
@@ -367,7 +359,7 @@ These tags are advisory only. Installation still relies on successful MCP valida
 </details>
 
 <details>
-<summary><b>Multiple robots on the same subnet</b></summary>
+<summary>Multiple robots on the same subnet</summary>
 
 If you run multiple Reachy Mini daemons on the same network, use:
 
@@ -381,14 +373,7 @@ reachy-mini-conversation-app --robot-name <name>
 
 ## Contributing
 
-We welcome bug fixes, features, profiles, and documentation improvements. Please review our
-[contribution guide](CONTRIBUTING.md) for branch conventions, quality checks, and PR workflow.
-Working with an AI coding assistant? Point it at [`AGENTS.md`](AGENTS.md) — it codifies our engineering standards for agents.
-
-Quick start:
-- Fork and clone the repo
-- Follow the [installation steps](#installation) (include the `dev` dependency group)
-- Run contributor checks listed in [CONTRIBUTING.md](CONTRIBUTING.md)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and [`AGENTS.md`](AGENTS.md) for coding-agent standards.
 
 ## License
 
