@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from reachy_mini_conversation_app.config import HF_AVAILABLE_VOICES, config
 from reachy_mini_conversation_app.console import LocalStream
+from reachy_mini_conversation_app.streaming import AdditionalOutputs
 from reachy_mini_conversation_app.startup_settings import (
     StartupSettings,
     load_startup_settings_into_runtime,
@@ -892,3 +894,157 @@ async def test_change_voice_reports_handler_failure() -> None:
     result = await stream.change_voice("Serena")
 
     assert "Failed to change voice" in result
+
+
+def _audio_robot(**media_attrs: Any) -> SimpleNamespace:
+    """Return a robot whose media exposes only the attributes a test drives."""
+    return SimpleNamespace(media=SimpleNamespace(audio=None, backend=None, **media_attrs))
+
+
+def _stop_after(stream: LocalStream, value: Any) -> Callable[[], Any]:
+    """Return a side effect that stops the stream after one iteration, yielding `value`."""
+
+    def _side_effect() -> Any:
+        stream._stop_event.set()
+        return value
+
+    return _side_effect
+
+
+@pytest.mark.asyncio
+async def test_record_loop_forwards_unmuted_frames() -> None:
+    """A recorded frame is forwarded to the handler with the input sample rate."""
+    frame = np.zeros(4, dtype=np.int16)
+    robot = _audio_robot(get_input_audio_samplerate=MagicMock(return_value=16000), get_audio_sample=MagicMock())
+    handler = MagicMock()
+    handler.receive = AsyncMock()
+    stream = LocalStream(handler, robot)
+    robot.media.get_audio_sample.side_effect = _stop_after(stream, frame)
+
+    await stream.record_loop()
+
+    handler.receive.assert_awaited_once_with((16000, frame))
+
+
+@pytest.mark.asyncio
+async def test_record_loop_skips_frames_while_muted() -> None:
+    """No frames are forwarded while the mic is muted."""
+    robot = _audio_robot(get_input_audio_samplerate=MagicMock(return_value=16000), get_audio_sample=MagicMock())
+    handler = MagicMock()
+    handler.receive = AsyncMock()
+    stream = LocalStream(handler, robot)
+    stream._mic_muted = True
+    robot.media.get_audio_sample.side_effect = _stop_after(stream, np.zeros(4, dtype=np.int16))
+
+    await stream.record_loop()
+
+    handler.receive.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_record_loop_skips_missing_frames() -> None:
+    """A None frame from the recorder is not forwarded."""
+    robot = _audio_robot(get_input_audio_samplerate=MagicMock(return_value=16000), get_audio_sample=MagicMock())
+    handler = MagicMock()
+    handler.receive = AsyncMock()
+    stream = LocalStream(handler, robot)
+    robot.media.get_audio_sample.side_effect = _stop_after(stream, None)
+
+    await stream.record_loop()
+
+    handler.receive.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_play_loop_logs_text_outputs() -> None:
+    """Text outputs are logged, not pushed to the speaker."""
+    robot = _audio_robot(push_audio_sample=MagicMock())
+    handler = MagicMock()
+    stream = LocalStream(handler, robot)
+    output = AdditionalOutputs({"role": "assistant", "content": "hi"})
+    handler.emit = AsyncMock(side_effect=_stop_after(stream, output))
+
+    await stream.play_loop()
+
+    robot.media.push_audio_sample.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_play_loop_pushes_mono_audio_as_float32() -> None:
+    """A mono int16 frame is pushed to the speaker as float32."""
+    robot = _audio_robot(push_audio_sample=MagicMock())
+    handler = MagicMock()
+    stream = LocalStream(handler, robot)
+    handler.emit = AsyncMock(side_effect=_stop_after(stream, (24000, np.zeros(4, dtype=np.int16))))
+
+    await stream.play_loop()
+
+    robot.media.push_audio_sample.assert_called_once()
+    pushed = robot.media.push_audio_sample.call_args.args[0]
+    assert pushed.ndim == 1
+    assert pushed.dtype == np.float32
+
+
+@pytest.mark.asyncio
+async def test_play_loop_downmixes_stereo_before_pushing() -> None:
+    """A stereo frame is reduced to a single mono channel before playback."""
+    robot = _audio_robot(push_audio_sample=MagicMock())
+    handler = MagicMock()
+    stream = LocalStream(handler, robot)
+    stereo = np.zeros((4, 2), dtype=np.int16)
+    handler.emit = AsyncMock(side_effect=_stop_after(stream, (24000, stereo)))
+
+    await stream.play_loop()
+
+    pushed = robot.media.push_audio_sample.call_args.args[0]
+    assert pushed.ndim == 1
+
+
+@pytest.mark.asyncio
+async def test_play_loop_skips_empty_audio() -> None:
+    """An empty audio frame is skipped, not pushed."""
+    robot = _audio_robot(push_audio_sample=MagicMock())
+    handler = MagicMock()
+    stream = LocalStream(handler, robot)
+    handler.emit = AsyncMock(side_effect=_stop_after(stream, (24000, np.array([], dtype=np.int16))))
+
+    await stream.play_loop()
+
+    robot.media.push_audio_sample.assert_not_called()
+
+
+def test_close_without_running_loop_stops_media() -> None:
+    """Closing without a running loop stops the media pipelines and sets the stop event."""
+    robot = _audio_robot(stop_recording=MagicMock(), stop_playing=MagicMock())
+    stream = LocalStream(MagicMock(), robot)
+    stream._asyncio_loop = None
+
+    stream.close()
+
+    robot.media.stop_recording.assert_called_once()
+    robot.media.stop_playing.assert_called_once()
+    assert stream._stop_event.is_set()
+
+
+def test_drain_output_queue_empties_in_place() -> None:
+    """The output queue is drained without being replaced."""
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    queue.put_nowait("a")
+    queue.put_nowait("b")
+    handler = MagicMock()
+    handler.output_queue = queue
+    stream = LocalStream(handler, _audio_robot())
+
+    stream._drain_output_queue()
+
+    assert stream.handler.output_queue is queue
+    assert queue.empty()
+
+
+def test_drain_output_queue_tolerates_missing_queue() -> None:
+    """Draining is a no-op when the handler has no output queue."""
+    handler = MagicMock()
+    handler.output_queue = None
+    stream = LocalStream(handler, _audio_robot())
+
+    stream._drain_output_queue()  # must not raise
