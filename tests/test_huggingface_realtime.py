@@ -1,3 +1,4 @@
+import os
 import time
 import asyncio
 from typing import Any
@@ -316,6 +317,31 @@ async def test_build_realtime_client_uses_direct_hf_ws_url(monkeypatch: Any) -> 
     assert client_kwargs["base_url"] == "http://127.0.0.1:8765/v1"
     assert client_kwargs["websocket_base_url"] == "ws://127.0.0.1:8765/v1"
     assert handler._realtime_connect_query == {"session_token": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_startup_falls_back_to_localhost_after_connection_refused(monkeypatch: Any) -> None:
+    """Local mode should retry once on localhost when a stale direct host is refused."""
+    original_ws_url = "ws://100.120.84.114:8765/v1/realtime"
+    fallback_ws_url = "ws://127.0.0.1:8765/v1/realtime"
+    monkeypatch.setattr(config, "HF_REALTIME_CONNECTION_MODE", "local")
+    monkeypatch.setattr(config, "HF_REALTIME_WS_URL", original_ws_url)
+    monkeypatch.setenv("HF_REALTIME_CONNECTION_MODE", "local")
+    monkeypatch.setenv("HF_REALTIME_WS_URL", original_ws_url)
+
+    handler = HuggingFaceRealtimeHandler(ToolDependencies(reachy_mini=MagicMock(), movement_manager=MagicMock()))
+    monkeypatch.setattr(handler, "_build_realtime_client", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        handler,
+        "_run_realtime_session",
+        AsyncMock(side_effect=[ConnectionRefusedError(111, "Connection refused"), None]),
+    )
+
+    await handler.start_up()
+
+    assert os.environ["HF_REALTIME_WS_URL"] == fallback_ws_url
+    assert config.HF_REALTIME_WS_URL == fallback_ws_url
+    assert handler._build_realtime_client.await_count >= 2
 
 
 @pytest.mark.parametrize(

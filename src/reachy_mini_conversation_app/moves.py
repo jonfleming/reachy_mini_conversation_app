@@ -548,7 +548,7 @@ class MovementManager:
         return antennas_cmd
 
     def _issue_control_command(
-        self, head: NDArray[np.float32], antennas: Tuple[float, float], body_yaw: float
+        self, head: NDArray[np.float32] | None, antennas: Tuple[float, float], body_yaw: float
     ) -> None:
         """Send the pose to the robot with throttled error logging."""
         try:
@@ -566,7 +566,12 @@ class MovementManager:
                 self._set_target_err_suppressed += 1
         else:
             with self._status_lock:
-                self._last_commanded_pose = clone_full_body_pose((head, antennas, body_yaw))
+                # Keep the previous head pose snapshot when the daemon owns head tracking.
+                if head is None:
+                    head_for_status = self._last_commanded_pose[0]
+                else:
+                    head_for_status = head
+                self._last_commanded_pose = clone_full_body_pose((head_for_status, antennas, body_yaw))
 
     def _update_frequency_stats(
         self,
@@ -749,7 +754,12 @@ class MovementManager:
             antennas_cmd = self._calculate_blended_antennas(antennas)
 
             # 5) Single set_target call - the only control point
-            self._issue_control_command(head, antennas_cmd, body_yaw)
+            # When tracking is enabled and no move/anchor owns the head, let the daemon
+            # tracker drive head orientation to avoid overriding it with a stale pose.
+            head_cmd: NDArray[np.float32] | None = head
+            if self._head_tracking and self.state.current_move is None and self._track_anchor is None:
+                head_cmd = None
+            self._issue_control_command(head_cmd, antennas_cmd, body_yaw)
 
             # 6) Adaptive sleep to align to next tick, then publish shared state
             sleep_time, freq_stats = self._schedule_next_tick(loop_start, freq_stats)

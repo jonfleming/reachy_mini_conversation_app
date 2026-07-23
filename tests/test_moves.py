@@ -82,6 +82,28 @@ def test_head_tracking_follows_speaking() -> None:
     robot.stop_head_tracking.assert_called_once()
 
 
+def test_idle_head_tracking_does_not_pin_head_target() -> None:
+    """When tracking is enabled and no move is active, head target is left to the daemon tracker."""
+    robot = MagicMock()
+    robot.get_current_head_pose.return_value = np.eye(4)
+    robot.get_current_joint_positions.return_value = ([0.0] * 6, [0.0, 0.0])
+    manager = MovementManager(robot)
+    manager.start()
+    try:
+        manager.set_head_tracking(True)
+        assert _wait_for(lambda: call(weight=1.0) in robot.start_head_tracking.call_args_list)
+
+        def _sent_without_head() -> bool:
+            for _args, kwargs in robot.set_target.call_args_list:
+                if kwargs.get("head") is None:
+                    return True
+            return False
+
+        assert _wait_for(_sent_without_head)
+    finally:
+        manager.stop(reset_to_neutral=False)
+
+
 def test_speaking_anchor_composes_emotions_and_holds_dances_from_neutral() -> None:
     """While speaking: hold the anchor, compose emotions onto it, play dances from neutral."""
     robot = MagicMock()

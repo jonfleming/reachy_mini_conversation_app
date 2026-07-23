@@ -1,3 +1,4 @@
+import os
 import json
 import time
 import uuid
@@ -28,13 +29,17 @@ from openai.types.realtime.realtime_audio_input_turn_detection_param import Serv
 
 from reachy_mini_conversation_app.tools import core_tools
 from reachy_mini_conversation_app.config import (
+    HF_REALTIME_WS_URL_ENV,
     HF_LOCAL_CONNECTION_MODE,
     config,
     get_default_voice,
     get_available_voices,
     get_hf_direct_ws_url,
     parse_hf_realtime_url,
+    build_hf_direct_ws_url,
+    parse_hf_direct_target,
     get_hf_connection_selection,
+    refresh_runtime_config_from_env,
 )
 from reachy_mini_conversation_app.prompts import (
     get_session_voice,
@@ -158,6 +163,45 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         self._startup_greeting_sent = False
         self._in_flight_tool_calls: set[str] = set()
         self._tool_batch_needs_response = False
+        self._attempted_localhost_fallback = False
+
+    @staticmethod
+    def _is_connection_refused_error(error: OSError) -> bool:
+        """Return whether an OS-level connection error indicates refusal."""
+        if isinstance(error, ConnectionRefusedError):
+            return True
+        winerror = getattr(error, "winerror", None)
+        errno = getattr(error, "errno", None)
+        return winerror in {1225, 10061} or errno in {111, 61}
+
+    async def _try_localhost_fallback_after_connection_refused(self, error: OSError) -> bool:
+        """Switch one local-mode retry to localhost when a stale remote host is unreachable."""
+        if self._attempted_localhost_fallback or not self._is_connection_refused_error(error):
+            return False
+
+        connection_selection = get_hf_connection_selection()
+        if connection_selection.mode != HF_LOCAL_CONNECTION_MODE:
+            return False
+
+        current_ws_url = connection_selection.direct_ws_url
+        host, port = parse_hf_direct_target(current_ws_url)
+        if host is None or port is None:
+            return False
+        if host.lower() in {"localhost", "127.0.0.1", "::1"}:
+            return False
+
+        fallback_ws_url = build_hf_direct_ws_url("127.0.0.1", port)
+        logger.warning(
+            "Local realtime endpoint %s is unreachable (%s). Retrying with %s.",
+            current_ws_url,
+            error,
+            fallback_ws_url,
+        )
+        os.environ[HF_REALTIME_WS_URL_ENV] = fallback_ws_url
+        refresh_runtime_config_from_env()
+        self._attempted_localhost_fallback = True
+        self.client = await self._build_realtime_client()
+        return True
 
     @staticmethod
     def _sanitize_tool_result_for_model(tool_name: str, tool_result: dict[str, Any]) -> dict[str, Any]:
@@ -375,6 +419,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
     async def start_up(self) -> None:
         """Start the handler with minimal retries on unexpected websocket closure."""
+        self._attempted_localhost_fallback = False
         self.client = await self._build_realtime_client()
 
         max_attempts = 3
@@ -394,6 +439,20 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                     delay = base_delay + jitter
                     logger.info("Retrying in %.1f seconds...", delay)
                     await asyncio.sleep(delay)
+                    continue
+                raise
+            except OSError as e:
+                logger.warning("Realtime websocket connect failed (attempt %d/%d): %s", attempt, max_attempts, e)
+                if await self._try_localhost_fallback_after_connection_refused(e):
+                    logger.info("Retrying realtime websocket with localhost fallback.")
+                    continue
+                if attempt < max_attempts:
+                    base_delay = 2 ** (attempt - 1)
+                    jitter = random.uniform(0, 0.5)
+                    delay = base_delay + jitter
+                    logger.info("Retrying in %.1f seconds...", delay)
+                    await asyncio.sleep(delay)
+                    self.client = await self._build_realtime_client()
                     continue
                 raise
             finally:
