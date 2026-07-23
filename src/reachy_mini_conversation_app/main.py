@@ -1,6 +1,15 @@
 """Entrypoint for the Reachy Mini conversation app."""
 
 from __future__ import annotations
+
+import sys
+import os
+
+print("Executable:", sys.executable)
+print("GI_TYPELIB_PATH:", os.environ["GI_TYPELIB_PATH"])
+print("XDG_DATA_DIRS:", os.environ["XDG_DATA_DIRS"])
+print("GST_PYTHONPATH_1_0 raw:", os.environ.get("GST_PYTHONPATH_1_0"))
+
 import sys
 import time
 import asyncio
