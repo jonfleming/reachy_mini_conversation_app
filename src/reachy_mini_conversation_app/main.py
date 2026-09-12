@@ -35,6 +35,39 @@ if TYPE_CHECKING:
     from reachy_mini_conversation_app.console import LocalStream
 
 
+_import_warmup_thread: threading.Thread | None = None
+
+
+def start_import_warmup() -> threading.Thread:
+    """Preload heavy modules in the background while the robot connects.
+
+    The openai realtime tree (~1.5s on the robot) is needed by the realtime
+    handler, but not before the robot / media pipelines are up. Importing it
+    on a side thread overlaps that cost with robot initialization instead of
+    paying it serially. Idempotent; errors are deferred to the real import
+    site, which reports them with full context.
+    """
+    global _import_warmup_thread
+    if _import_warmup_thread is None:
+
+        def _preload() -> None:
+            try:
+                # AsyncOpenAI.realtime is a cached_property whose module tree
+                # (~1.6s on the CM4) otherwise loads lazily INSIDE the ws
+                # connect phase; same for the websockets client the SDK pulls
+                # in __aenter__. Importing plain openai does NOT cover these.
+                import openai.resources.realtime  # noqa: F401
+                import websockets.asyncio.client  # noqa: F401
+
+                import reachy_mini_conversation_app.huggingface_realtime  # noqa: F401
+            except Exception:
+                logging.getLogger(__name__).debug("Import warmup failed", exc_info=True)
+
+        _import_warmup_thread = threading.Thread(target=_preload, name="import-warmup", daemon=True)
+        _import_warmup_thread.start()
+    return _import_warmup_thread
+
+
 def _start_inactivity_timeout_thread(
     timeout_minutes: float,
     stream_manager: LocalStream,
@@ -93,6 +126,7 @@ def run(
     instance_path: Optional[str] = None,
 ) -> None:
     """Run the Reachy Mini conversation app."""
+    start_import_warmup()
     # Putting these dependencies here makes the dashboard faster to load when the conversation app is installed
     from reachy_mini_conversation_app.moves import MovementManager
     from reachy_mini_conversation_app.config import (
@@ -135,7 +169,7 @@ def run(
     )
 
     from reachy_mini_conversation_app.console import LocalStream
-    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies, initialize_tools
+    from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
     from reachy_mini_conversation_app.conversation_handler import ConversationHandler
 
     if robot is None:
@@ -287,7 +321,7 @@ def run(
         logger.info("Web UI available at http://localhost:7860")
 
     try:
-        initialize_tools(instance_path=instance_path)
+        app_lifecycle.initialize_tools_with_default_fallback(instance_path, logger)
     except Exception as e:
         logger.error("Failed to initialize tools: %s", e)
         sys.exit(1)
@@ -304,12 +338,19 @@ def run(
         _start_inactivity_timeout_thread(timeout_minutes, stream_manager, logger, app_stop_event, run_go_to_sleep_tool)
 
     def poll_stop_event() -> None:
-        """Poll the stop event to allow graceful shutdown."""
+        """Poll the stop event to allow graceful shutdown.
+
+        Deliberately does NOT put the robot to sleep: an external stop
+        (mobile app, dashboard, app switch) means "stop this app", not
+        "power the robot down" — the daemon returns it to the neutral
+        pose afterwards, awake and ready for the next app. Sleeping is
+        reserved for the explicit paths (the voice go_to_sleep tool and
+        the inactivity timeout).
+        """
         if app_stop_event is not None:
             app_stop_event.wait()
 
         logger.info("App stop event detected, shutting down...")
-        run_go_to_sleep_tool()
         try:
             stream_manager.close()
         except Exception as e:
@@ -326,9 +367,11 @@ def run(
         if own_ui_server is not None:
             own_ui_server.should_exit = True
 
-        sleep_result = run_go_to_sleep_tool()
-        if "error" in sleep_result:
-            movement_manager.stop(reset_to_neutral=False)
+        # Stop the motion writes without changing the robot's posture. If
+        # the shutdown came from the voice go_to_sleep tool the robot is
+        # already in the sleep pose; on a plain stop it stays awake and
+        # the daemon returns it to neutral once the process exits.
+        movement_manager.stop(reset_to_neutral=False)
         try:
             robot.disable_wobbling()
         except Exception as e:
@@ -351,6 +394,11 @@ class ReachyMiniConversationApp(ReachyMiniApp):  # type: ignore[misc]
 
     custom_app_url = "http://0.0.0.0:7860/"
     dont_start_webserver = False
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Start preloading heavy imports before the robot/media init in wrapped_run."""
+        start_import_warmup()
+        super().__init__(*args, **kwargs)
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
         """Run the Reachy Mini conversation app."""
