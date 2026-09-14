@@ -1,6 +1,6 @@
 """Tests for the personality parameter sets."""
 
-from reachy_buddy.core.personality import PERSONALITIES, Personality
+from reachy_buddy.core.personality import PERSONALITIES, Personality, personality_for_profile
 
 
 def test_default_personality_is_sane() -> None:
@@ -31,3 +31,16 @@ def test_personalities_do_not_share_baseline_state() -> None:
     PERSONALITIES["default"].baseline.curiosity = 0.99
 
     assert PERSONALITIES["noir_detective"].baseline.curiosity != 0.99
+
+
+def test_personality_for_profile_copies_registry_and_unknowns() -> None:
+    """Conversation-app profile names map to buddy tunables without sharing baselines."""
+    noir = personality_for_profile("Noir Detective")
+    butler = personality_for_profile("victorian_butler")
+
+    assert noir.name == "noir_detective"
+    assert noir.speak_cooldown_s == PERSONALITIES["noir_detective"].speak_cooldown_s
+    noir.baseline.curiosity = 0.11
+    assert PERSONALITIES["noir_detective"].baseline.curiosity != 0.11
+    assert butler.name == "victorian_butler"
+    assert butler.chattiness == Personality().chattiness

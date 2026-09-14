@@ -1,6 +1,7 @@
 import abc
 import sys
 import json
+import time
 import asyncio
 import inspect
 import logging
@@ -44,6 +45,8 @@ class ToolDependencies:
     camera_enabled: bool = False
     motion_duration_s: float = 1.0
     go_to_sleep: Callable[[], dict[str, Any]] | None = None
+    buddy_presence_enabled: bool = False
+    buddy_session: Any = None
 
 
 class ToolSpec(TypedDict):
@@ -461,19 +464,43 @@ def _safe_load_obj(args_json: str) -> Dict[str, Any]:
         return {}
 
 
+_MAX_TOOL_ARGS_LOG_CHARS = 500
+
+
+def _summarize_tool_args(args: Dict[str, Any]) -> str:
+    serializable = {key: value for key, value in args.items() if key != "tool_manager"}
+    try:
+        text = json.dumps(serializable, default=str)
+    except Exception:
+        text = repr(serializable)
+    if len(text) > _MAX_TOOL_ARGS_LOG_CHARS:
+        return text[:_MAX_TOOL_ARGS_LOG_CHARS] + "...(truncated)"
+    return text
+
+
 async def _dispatch_tool_call(tool_name: str, args: Dict[str, Any], deps: ToolDependencies) -> Dict[str, Any]:
+    started = time.monotonic()
+    logger.info("Dispatching tool %s args=%s", tool_name, _summarize_tool_args(args))
     tool = get_tools().get(tool_name)
     if not tool:
+        logger.warning("Unknown tool: %s", tool_name)
         return {"error": f"unknown tool: {tool_name}"}
     try:
-        return await tool(deps, **args)
+        result = await tool(deps, **args)
     except asyncio.CancelledError:
-        logger.info("Tool cancelled: %s", tool_name)
+        logger.info("Tool cancelled: %s after %.2fs", tool_name, time.monotonic() - started)
         return {"error": "Tool cancelled"}
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
-        logger.exception("Tool error in %s: %s", tool_name, msg)
+        logger.exception("Tool error in %s after %.2fs: %s", tool_name, time.monotonic() - started, msg)
         return {"error": msg}
+
+    elapsed_s = time.monotonic() - started
+    if isinstance(result, dict) and result.get("error"):
+        logger.warning("Tool %s returned error after %.2fs: %s", tool_name, elapsed_s, result["error"])
+    else:
+        logger.info("Tool %s completed in %.2fs", tool_name, elapsed_s)
+    return result
 
 
 async def dispatch_tool_call(tool_name: str, args_json: str, deps: ToolDependencies) -> Dict[str, Any]:

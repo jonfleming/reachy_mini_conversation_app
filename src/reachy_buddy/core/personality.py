@@ -1,6 +1,6 @@
 """Personalities: named parameter sets that make the same engine feel like different characters."""
 
-from dataclasses import field, dataclass
+from dataclasses import field, replace, dataclass
 
 from reachy_buddy.core.drives import Drives
 
@@ -31,3 +31,12 @@ PERSONALITIES: dict[str, Personality] = {
         style_hint="hard-boiled, observational",
     ),
 }
+
+
+def personality_for_profile(profile_name: str | None) -> Personality:
+    """Return tunables for a conversation-app profile name, copying registry entries."""
+    key = (profile_name or "default").strip().lower().replace(" ", "_") or "default"
+    template = PERSONALITIES.get(key)
+    if template is None:
+        return Personality(name=key)
+    return replace(template, name=key, baseline=replace(template.baseline))

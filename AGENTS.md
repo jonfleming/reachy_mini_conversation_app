@@ -127,6 +127,17 @@ ruff check . --fix && ruff format . && mypy --pretty --show-error-codes && pytes
 
 If you change dependencies, keep `uv.lock` in sync by running `uv lock` (CI validates it).
 
+### `face_recognition` / `face_recognition_models`
+
+The buddy extra (`face-recognition`) prints:
+
+```text
+Please install `face_recognition_models` with this command before using `face_recognition`:
+pip install git+https://github.com/ageitgey/face_recognition_models
+```
+
+That message is misleading. `face_recognition` treats **any** failure while importing `face_recognition_models` as "not installed". The usual real error is `ModuleNotFoundError: No module named 'pkg_resources'`: `face_recognition_models` still uses `pkg_resources`, which setuptools removed in 81+. Pin the venv with `uv pip install "setuptools<81"` (re-run after `uv sync` if setuptools jumps back to 81+). Confirm with `python -c "import face_recognition_models"` rather than reinstalling the models package.
+
 ## Continuous integration
 
 `.github/workflows/` holds eight live, load-bearing workflows. The first four gate every PR. The local gate above mirrors them, so green locally means green CI.

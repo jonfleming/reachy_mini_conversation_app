@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from reachy_buddy.vision.face_tracking import face_size, face_center
+from reachy_buddy.vision.face_geometry import face_size, face_center
 
 
 def _landmarks(xs: tuple[float, float], ys: tuple[float, float]) -> NDArray[np.float64]:

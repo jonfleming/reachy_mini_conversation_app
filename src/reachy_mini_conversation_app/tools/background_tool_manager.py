@@ -24,6 +24,7 @@ from reachy_mini_conversation_app.tools.tool_constants import ToolState, SystemT
 logger = logging.getLogger(__name__)
 
 _SYSTEM_TOOL_NAMES: set[str] = {t.value for t in SystemTool}
+_STALL_LOG_INTERVAL_S = 15.0
 
 
 class ToolProgress(BaseModel):
@@ -160,7 +161,12 @@ class BackgroundToolManager(BaseModel):
         )
         background_tool._task = async_task
 
-        logger.info(f"Started background tool: {background_tool.tool_name} (id={id})")
+        logger.info(
+            "Started background tool: %s (id=%s, idle=%s)",
+            background_tool.tool_name,
+            id,
+            is_idle_tool_call,
+        )
 
         return background_tool
 
@@ -170,28 +176,76 @@ class BackgroundToolManager(BaseModel):
         tool_call_routine: ToolCallRoutine,
     ) -> None:
         """Execute the tool and handle completion."""
-        result: dict[str, Any] = await tool_call_routine(self)
+        started = time.monotonic()
+        stop_watchdog = asyncio.Event()
+
+        async def _watchdog() -> None:
+            while True:
+                try:
+                    await asyncio.wait_for(stop_watchdog.wait(), timeout=_STALL_LOG_INTERVAL_S)
+                    return
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Tool '%s' (id=%s) still running after %.1fs",
+                        background_tool.tool_name,
+                        background_tool.id,
+                        time.monotonic() - started,
+                    )
+
+        watchdog = asyncio.create_task(
+            _watchdog(),
+            name=f"tool-watchdog-{background_tool.tool_name}-{background_tool.id}",
+        )
+        try:
+            result: dict[str, Any] = await tool_call_routine(self)
+        finally:
+            stop_watchdog.set()
+            watchdog.cancel()
+            try:
+                await watchdog
+            except asyncio.CancelledError:
+                pass
+
         background_tool.completed_at = time.monotonic()
+        elapsed_s = background_tool.completed_at - started
         error = result.get("error")
 
         if error is not None:
+            background_tool.error = error
             if error == "Tool cancelled":
                 background_tool.status = ToolState.CANCELLED
-                logger.debug(f"Background tool cancelled: {background_tool.tool_name} (id={background_tool.id})")
+                logger.info(
+                    "Background tool cancelled: %s (id=%s) after %.2fs",
+                    background_tool.tool_name,
+                    background_tool.id,
+                    elapsed_s,
+                )
             else:
                 background_tool.status = ToolState.FAILED
-                logger.debug(
-                    f"Background tool failed: {background_tool.tool_name} (id={background_tool.id}): {background_tool.error}"
+                logger.warning(
+                    "Background tool failed: %s (id=%s) after %.2fs: %s",
+                    background_tool.tool_name,
+                    background_tool.id,
+                    elapsed_s,
+                    error,
                 )
-            background_tool.error = result["error"]
-
         else:
             background_tool.result = result
             background_tool.status = ToolState.COMPLETED
-            logger.debug(f"Background tool completed: {background_tool.tool_name} (id={background_tool.id})")
+            logger.info(
+                "Background tool completed: %s (id=%s) in %.2fs",
+                background_tool.tool_name,
+                background_tool.id,
+                elapsed_s,
+            )
 
         await self._notification_queue.put(background_tool.get_notification())
-        logger.debug(f"Queued notification for tool: {background_tool.tool_name} (id={background_tool.id})")
+        logger.debug(
+            "Queued notification for tool: %s (id=%s, status=%s)",
+            background_tool.tool_name,
+            background_tool.id,
+            background_tool.status.value,
+        )
 
     async def update_progress(
         self,
@@ -269,7 +323,14 @@ class BackgroundToolManager(BaseModel):
             while True:
                 background_tool = await self._notification_queue.get()
                 for callback in tool_callbacks:
-                    await callback(background_tool)
+                    try:
+                        await callback(background_tool)
+                    except Exception:
+                        logger.exception(
+                            "Tool result callback failed for %s (id=%s); continuing",
+                            background_tool.tool_name,
+                            background_tool.id,
+                        )
 
         async def _cleanup(interval_seconds: float = 5 * 60) -> None:
             while True:

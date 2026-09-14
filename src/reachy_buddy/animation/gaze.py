@@ -77,6 +77,10 @@ class GazeController:
         """Update the currently visible face position, or None when no face is seen."""
         self._face_center = face_center
 
+    def angles_for(self, center: tuple[float, float]) -> tuple[float, float]:
+        """Return yaw/pitch degrees that center a normalized image point."""
+        return self._eye_contact.gaze_angles(center)
+
     def set_speaking(self, speaking: bool) -> None:
         """Mark whether the buddy is speaking; speaking calms tracking into eye contact."""
         self._speaking = speaking

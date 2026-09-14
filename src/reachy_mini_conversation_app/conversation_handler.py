@@ -79,7 +79,8 @@ class ConversationHandler(AsyncStreamHandler, ABC):
         idle_duration = now - self.last_activity_time
         idle_behavior_duration = now - self.last_idle_behavior_time
         if (
-            idle_duration > self.IDLE_BEHAVIOR_THRESHOLD_S
+            not self.deps.buddy_presence_enabled
+            and idle_duration > self.IDLE_BEHAVIOR_THRESHOLD_S
             and idle_behavior_duration > self.IDLE_BEHAVIOR_THRESHOLD_S
             and self._idle_behavior_ready()
             and self.deps.movement_manager.is_idle()

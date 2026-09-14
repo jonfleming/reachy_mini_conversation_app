@@ -121,3 +121,11 @@ def test_gaze_loop_emits_commands_and_stops() -> None:
     assert enough.wait(timeout=2.0)
     loop.stop()
     assert all(isinstance(command, GazeCommand) for command in received)
+
+
+def test_angles_for_maps_image_center_to_head_yaw_pitch() -> None:
+    """Normalized image points become yaw/pitch through the camera FOV."""
+    controller = GazeController()
+    yaw, pitch = controller.angles_for((0.8, 0.25))
+    assert abs(yaw - 21.0) < 1e-6
+    assert abs(pitch - 12.5) < 1e-6

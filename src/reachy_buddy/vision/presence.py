@@ -10,7 +10,7 @@ from collections.abc import Callable
 import numpy as np
 from numpy.typing import NDArray
 
-from reachy_buddy.vision.face_tracking import face_size, face_center
+from reachy_buddy.vision.face_geometry import face_size, face_center
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,11 @@ class PresenceTracker:
         return self._primary
 
     @property
+    def primary(self) -> TrackedFace | None:
+        """The debounced primary face, or None when nobody is in view."""
+        return self._primary
+
+    @property
     def present(self) -> bool:
         """Whether a face is currently tracked, including the debounce window."""
         return self._primary is not None
@@ -87,11 +92,19 @@ class PresenceLoop:
         self._interval = 1.0 / frames_per_second
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="reachy-buddy-presence", daemon=True)
+        self._frame_lock = threading.Lock()
+        self._latest_frame: NDArray[np.uint8] | None = None
 
     @property
     def tracker(self) -> PresenceTracker:
         """Return the tracker holding the latest debounced presence state."""
         return self._tracker
+
+    @property
+    def latest_frame(self) -> NDArray[np.uint8] | None:
+        """The most recent camera frame observed by the loop, if any."""
+        with self._frame_lock:
+            return self._latest_frame
 
     def start(self) -> None:
         """Start the polling thread."""
@@ -107,6 +120,8 @@ class PresenceLoop:
         while not self._stop.is_set():
             frame = self._frame_source()
             if frame is not None:
+                with self._frame_lock:
+                    self._latest_frame = frame
                 self._tracker.observe(frame)
                 if self._tracker.present != present:
                     present = self._tracker.present

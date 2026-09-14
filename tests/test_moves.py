@@ -209,3 +209,21 @@ def test_handle_command_queue_and_clear() -> None:
     manager._handle_command("clear_queue", None, now)
     assert len(manager.move_queue) == 0
     assert manager.state.current_move is None
+
+
+def test_idle_fill_factory_queues_buddy_move_instead_of_breathing() -> None:
+    """When a buddy factory is set, idle fill does not sample robot joints for BreathingMove."""
+    from reachy_buddy.animation.pose_buffer import PoseBuffer, BuddyIdleMove
+
+    robot = MagicMock()
+    manager = MovementManager(robot)
+    buffer = PoseBuffer()
+    manager._idle_fill_factory = lambda: BuddyIdleMove(buffer)
+    manager.state.last_activity_time = manager._now() - 10.0
+    manager._manage_breathing(manager._now())
+
+    assert manager._breathing_active is True
+    assert len(manager.move_queue) == 1
+    assert getattr(manager.move_queue[0], "is_idle_fill", False) is True
+    robot.get_current_head_pose.assert_not_called()
+    robot.goto_target.assert_not_called()

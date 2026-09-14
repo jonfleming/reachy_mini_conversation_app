@@ -28,7 +28,7 @@ import time
 import logging
 import threading
 from queue import Empty, Queue
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Callable
 from collections import deque
 from dataclasses import dataclass
 
@@ -220,7 +220,8 @@ class MovementManager:
         self._antenna_unfreeze_blend = 1.0
         self._antenna_blend_duration = 0.4  # seconds to blend back after listening
         self._last_listening_blend_time = self._now()
-        self._breathing_active = False  # true when breathing move is running or queued
+        self._breathing_active = False  # true when breathing/buddy idle fill is running or queued
+        self._idle_fill_factory: Callable[[], Move] | None = None
         self._listening_debounce_s = 0.15
         self._last_listening_toggle_time = self._now()
         self._last_set_target_err = 0.0
@@ -285,6 +286,10 @@ class MovementManager:
             if self._shared_is_listening == listening:
                 return
         self._command_queue.put(("set_listening", listening))
+
+    def set_idle_fill_factory(self, factory: Callable[[], Move] | None) -> None:
+        """Use `factory` for idle fill instead of BreathingMove; None restores breathing."""
+        self._command_queue.put(("set_idle_fill_factory", factory))
 
     def set_head_tracking(self, enabled: bool) -> None:
         """Start or stop following the user's face; thread-safe via the command queue."""
@@ -367,6 +372,9 @@ class MovementManager:
                 # Unfreeze: restart blending from frozen pose
                 self._antenna_unfreeze_blend = 0.0
             self.state.update_activity()
+        elif command == "set_idle_fill_factory":
+            self._idle_fill_factory = payload if callable(payload) else None
+            self._breathing_active = False
         elif command == "set_head_tracking":
             enabled = bool(payload)
             if self._head_tracking == enabled:
@@ -421,11 +429,17 @@ class MovementManager:
                 self.state.current_move = self.move_queue.popleft()
                 self.state.move_start_time = current_time
                 # Any real move cancels breathing mode flag
-                self._breathing_active = isinstance(self.state.current_move, BreathingMove)
+                self._breathing_active = self._is_idle_fill(self.state.current_move)
                 logger.debug(f"Starting new move, duration: {self.state.current_move.duration}s")
 
+    def _is_idle_fill(self, move: Move | None) -> bool:
+        """Return True for breathing or a buddy idle-fill move."""
+        if move is None:
+            return False
+        return isinstance(move, BreathingMove) or bool(getattr(move, "is_idle_fill", False))
+
     def _manage_breathing(self, current_time: float) -> None:
-        """Manage automatic breathing when idle."""
+        """Manage automatic breathing or buddy idle fill when idle."""
         if (
             self.state.current_move is None
             and not self.move_queue
@@ -435,32 +449,33 @@ class MovementManager:
             idle_for = current_time - self.state.last_activity_time
             if idle_for >= self.idle_inactivity_delay:
                 try:
-                    # These 2 functions return the latest available sensor data from the robot, but don't perform I/O synchronously.
-                    # Therefore, we accept calling them inside the control loop.
-                    _, current_antennas = self.current_robot.get_current_joint_positions()
-                    current_head_pose = self.current_robot.get_current_head_pose()
-
                     self._breathing_active = True
                     self.state.update_activity()
-
-                    breathing_move = BreathingMove(
-                        interpolation_start_pose=current_head_pose,
-                        interpolation_start_antennas=current_antennas,
-                        interpolation_duration=1.0,
-                    )
-                    self.move_queue.append(breathing_move)
-                    logger.debug("Started breathing after %.1fs of inactivity", idle_for)
+                    if self._idle_fill_factory is not None:
+                        idle_move = self._idle_fill_factory()
+                    else:
+                        # These 2 functions return the latest available sensor data from the robot, but don't perform I/O synchronously.
+                        # Therefore, we accept calling them inside the control loop.
+                        _, current_antennas = self.current_robot.get_current_joint_positions()
+                        current_head_pose = self.current_robot.get_current_head_pose()
+                        idle_move = BreathingMove(
+                            interpolation_start_pose=current_head_pose,
+                            interpolation_start_antennas=current_antennas,
+                            interpolation_duration=1.0,
+                        )
+                    self.move_queue.append(idle_move)
+                    logger.debug("Started idle fill after %.1fs of inactivity", idle_for)
                 except Exception as e:
                     self._breathing_active = False
-                    logger.error("Failed to start breathing: %s", e)
+                    logger.error("Failed to start idle fill: %s", e)
 
-        if isinstance(self.state.current_move, BreathingMove) and self.move_queue:
+        if self._is_idle_fill(self.state.current_move) and self.move_queue:
             self.state.current_move = None
             self.state.move_start_time = None
             self._breathing_active = False
-            logger.debug("Stopping breathing due to new move activity")
+            logger.debug("Stopping idle fill due to new move activity")
 
-        if self.state.current_move is not None and not isinstance(self.state.current_move, BreathingMove):
+        if self.state.current_move is not None and not self._is_idle_fill(self.state.current_move):
             self._breathing_active = False
 
     def _get_primary_pose(self, current_time: float) -> FullBodyPose:

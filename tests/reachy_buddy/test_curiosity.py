@@ -124,6 +124,23 @@ def test_ignored_outcome_discourages_and_dents_confidence() -> None:
     assert stimulus.confidence < 0.0
 
 
+def test_unfinished_callback_can_win_arbitration() -> None:
+    """A check-in candidate is chosen when nothing more urgent is on the table."""
+    engine = CuriosityEngine()
+    intent = engine.decide(Drives(), seconds_since_speech=30.0, checkin="Did the CAD mount work?")
+
+    assert intent.kind == "checkin"
+    assert intent.payload == "Did the CAD mount work?"
+
+
+def test_long_visit_can_suggest_a_break() -> None:
+    """A due break becomes an intent when focus is not keeping the buddy quiet."""
+    engine = CuriosityEngine()
+    intent = engine.decide(Drives(focus=0.2), seconds_since_speech=30.0, break_due=True)
+
+    assert intent.kind == "break"
+
+
 def test_engagement_stays_bounded() -> None:
     """Repeated outcomes can never push engagement outside its learned range."""
     engine = CuriosityEngine()

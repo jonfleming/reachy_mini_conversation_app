@@ -68,6 +68,11 @@ source .venv/bin/activate
 uv sync
 ```
 
+Include desktop-buddy vision extras (MediaPipe / OpenCV):
+```bash
+uv sync --extra buddy --group dev
+```
+
 Include dev dependencies:
 ```bash
 uv sync --group dev
@@ -90,6 +95,7 @@ pip install -e .
 Install dev dependencies:
 ```bash
 pip install -e .[dev]                   # Development tools
+pip install -e .[buddy]                 # Desktop-buddy vision extras (MediaPipe / OpenCV)
 ```
 
 </details>
@@ -107,6 +113,12 @@ Copy `.env.example` to `.env` when you want to point Hugging Face at your own lo
 | `HF_REALTIME_WS_URL` | Direct websocket endpoint for your own Hugging Face backend. Accepts either a base URL like `ws://127.0.0.1:8765/v1` or the full websocket URL `ws://127.0.0.1:8765/v1/realtime`. Used when `HF_REALTIME_CONNECTION_MODE=local`. |
 | `HF_TOKEN` | Optional token for Hugging Face access. Local endpoints receive only this explicitly configured token. |
 | `REACHY_MINI_APP_TIMEOUT_MINUTES` | Minutes of inactivity before Reachy goes to sleep and the app stops. Defaults to `1440` (one day); set to `0` to disable. |
+| `BUDDY_ENABLED` | Set to `1` to run the desktop-buddy sidecar (idle gaze, greet/farewell, named check-ins, break suggestions, Hindsight memory). Requires `uv sync --extra buddy`. |
+| `BUDDY_HINDSIGHT_URL` | Hindsight HTTP origin for per-personality memory. Defaults to `http://localhost:8888`. |
+| `BUDDY_HINDSIGHT_BANK_PREFIX` | Bank naming prefix; each profile uses `<prefix>-<profile>`. Defaults to `reachy`. |
+| `BUDDY_LLAMA_URL` | Optional OpenAI-compatible llama.cpp origin (for example `http://localhost:8080/v1`) used only for private thoughts. Template thoughts are used when unset or unreachable. |
+| `BUDDY_FACES_PATH` | NPZ file of enrolled face encodings. Defaults to `~/.reachy_buddy/faces.npz`. |
+| `BUDDY_OBJECT_ONNX` / `BUDDY_OBJECT_LABELS` | Optional YOLO-style ONNX model and label file. Object detection stays off until both paths exist. |
 
 ### Hugging Face Connection Modes
 
@@ -200,6 +212,7 @@ Every bundled profile enables `head_tracking` by default; users can still disabl
 | `sweep_look` | Sweep Reachy's head left, right, and back to center. | Shared tool, enabled by default in the default profile. |
 | `remember` | Save one short, stable fact about the user for future sessions. | Core install only. Stored in the app instance data directory. |
 | `forget` | Remove a saved memory fact by matching a short query. | Core install only. |
+| `enroll_person` | Save the face currently in view under a name for later recognition. | Desktop buddy (`BUDDY_ENABLED=1`) plus `uv sync --extra buddy`. |
 | `pollen_robotics_reachy_mini_search_tool__search_web` | Search the web and return a short list of results. | Preinstalled MCP Space: `pollen-robotics/reachy-mini-search-tool`. |
 | `pollen_robotics_reachy_mini_weather_tool__get_weather` | Report today's weather for a place: current conditions, high and low temperature, and rain chance. | Preinstalled MCP Space: `pollen-robotics/reachy-mini-weather-tool`. |
 | `pollen_robotics_reachy_mini_time_tool__get_time` | Report the current time for a timezone or the user's local time, or the difference between two timezones. | Preinstalled MCP Space: `pollen-robotics/reachy-mini-time-tool`. |

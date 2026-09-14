@@ -227,13 +227,24 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
         if self._response_done_event.is_set():
             return True
 
+        logger.info(
+            "Waiting up to %.0fs for response.done before sending tool result; in_flight=%s",
+            _RESPONSE_DONE_TIMEOUT,
+            sorted(self._in_flight_tool_calls),
+        )
         try:
             await asyncio.wait_for(
                 self._response_done_event.wait(),
                 timeout=_RESPONSE_DONE_TIMEOUT,
             )
+            logger.info("response.done observed; sending tool result")
             return True
         except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out after %.0fs waiting for response.done before sending tool result; in_flight=%s",
+                _RESPONSE_DONE_TIMEOUT,
+                sorted(self._in_flight_tool_calls),
+            )
             return False
 
     def _resolve_backend_voice(
@@ -623,6 +634,14 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
     async def _handle_tool_result(self, completed_tool: ToolNotification) -> None:
         """Process the result of a tool call."""
+        logger.info(
+            "Handling tool result: %s (id=%s, idle=%s, status=%s, in_flight=%s)",
+            completed_tool.tool_name,
+            completed_tool.id,
+            completed_tool.is_idle_tool_call,
+            completed_tool.status.value,
+            sorted(self._in_flight_tool_calls),
+        )
         if completed_tool.error is not None:
             logger.error(
                 "Tool '%s' (id=%s) failed with error: %s",
@@ -683,6 +702,11 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                     )
                     return
                 else:
+                    logger.info(
+                        "Sending function_call_output for tool '%s' (id=%s)",
+                        completed_tool.tool_name,
+                        completed_tool.id,
+                    )
                     await self.connection.conversation.item.create(
                         item={
                             "type": "function_call_output",
@@ -691,6 +715,11 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         },
                     )
                     model_result_submitted = True
+                    logger.info(
+                        "Sent function_call_output for tool '%s' (id=%s)",
+                        completed_tool.tool_name,
+                        completed_tool.id,
+                    )
 
             await self.output_queue.put(
                 AdditionalOutputs(
@@ -738,6 +767,12 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
             if isinstance(completed_tool.id, str):
                 self._in_flight_tool_calls.discard(completed_tool.id)
+                logger.info(
+                    "Tool '%s' (id=%s) no longer in-flight; remaining=%s",
+                    completed_tool.tool_name,
+                    completed_tool.id,
+                    sorted(self._in_flight_tool_calls),
+                )
 
             tool = core_tools.get_tools().get(completed_tool.tool_name)
             # Always surface errors, skip the spoken follow-up for tools that opt out.
@@ -747,12 +782,32 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
             # Parallel tool calls in one turn: respond once every result is in, not per tool.
             if self._tool_batch_needs_response and not self._in_flight_tool_calls:
                 self._tool_batch_needs_response = False
+                logger.info(
+                    "All in-flight tools finished; requesting spoken follow-up after '%s' (id=%s)",
+                    completed_tool.tool_name,
+                    completed_tool.id,
+                )
                 await self._safe_response_create()
+            elif self._tool_batch_needs_response and self._in_flight_tool_calls:
+                logger.info(
+                    "Deferring spoken follow-up until remaining tools finish: %s",
+                    sorted(self._in_flight_tool_calls),
+                )
 
         except ConnectionClosedError:
-            logger.warning("Connection closed while sending tool result")
+            logger.warning(
+                "Connection closed while sending tool '%s' (id=%s) result",
+                completed_tool.tool_name,
+                completed_tool.id,
+            )
             self.connection = None
             self._response_done_event.set()
+        except Exception:
+            logger.exception(
+                "Failed while sending tool '%s' (id=%s) result back to the model",
+                completed_tool.tool_name,
+                completed_tool.id,
+            )
 
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
@@ -817,6 +872,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
 
                     if event.type == "response.output_audio.done":
                         self.deps.movement_manager.set_speaking(False)
+                        self._mark_activity("assistant_speech_done")
                         logger.debug("response completed")
 
                     if event.type == "response.output_text.delta":
@@ -840,9 +896,16 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         # Doesn't mean the audio is done playing
                         # Resume tracking for responses that emit no audio (text-only / tool-only).
                         self.deps.movement_manager.set_speaking(False)
+                        self._mark_activity("assistant_speech_done")
                         self._response_done_event.set()
                         self._response_started_or_rejected_event.set()
-                        logger.debug("Response done")
+                        if self._in_flight_tool_calls:
+                            logger.info(
+                                "Response done with in-flight tools: %s",
+                                sorted(self._in_flight_tool_calls),
+                            )
+                        else:
+                            logger.debug("Response done")
 
                     if event.type == "conversation.item.input_audio_transcription.delta":
                         self._mark_activity("user_transcription_delta")
@@ -919,10 +982,11 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         call_id: str = str(getattr(event, "call_id", uuid.uuid4()))
 
                         logger.info(
-                            "Tool call received — tool_name=%r, call_id=%s, args=%s",
+                            "Tool call received — tool_name=%r, call_id=%s, args=%s, in_flight=%s",
                             tool_name,
                             call_id,
                             args_json_str,
+                            sorted(self._in_flight_tool_calls),
                         )
 
                         if not isinstance(tool_name, str) or not isinstance(args_json_str, str):

@@ -2,6 +2,7 @@ import json
 import time
 import base64
 import asyncio
+import logging
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -719,12 +720,15 @@ async def test_wait_for_response_done_returns_true_when_set() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wait_for_response_done_times_out(monkeypatch: Any) -> None:
+async def test_wait_for_response_done_times_out(monkeypatch: Any, caplog: pytest.LogCaptureFixture) -> None:
     """The tool-result gate fails when the active response never finishes."""
     monkeypatch.setattr(hf_mod, "_RESPONSE_DONE_TIMEOUT", 0.01)
     handler = _plain_handler()
     handler._response_done_event.clear()
-    assert await handler._wait_for_response_done_before_tool_result() is False
+    handler._in_flight_tool_calls = {"c1"}
+    with caplog.at_level(logging.WARNING, logger=hf_mod.logger.name):
+        assert await handler._wait_for_response_done_before_tool_result() is False
+    assert any("Timed out after" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -770,6 +774,24 @@ async def test_emit_runs_idle_behavior_when_due(monkeypatch: Any) -> None:
 
     send_idle_signal.assert_awaited_once()
     assert handler.last_idle_behavior_time >= before
+
+
+@pytest.mark.asyncio
+async def test_emit_skips_idle_tools_when_buddy_presence_owns_idle(monkeypatch: Any) -> None:
+    """The buddy sidecar replaces the 3-minute idle tool lottery."""
+    handler = _plain_handler()
+    handler.deps.buddy_presence_enabled = True
+    handler.last_activity_time = time.monotonic() - (handler.IDLE_BEHAVIOR_THRESHOLD_S + 10.0)
+    handler.last_idle_behavior_time = handler.last_activity_time
+    handler.deps.movement_manager.is_idle.return_value = True
+    handler._response_done_event.set()
+    send_idle_signal = AsyncMock()
+    monkeypatch.setattr(handler, "send_idle_signal", send_idle_signal)
+    monkeypatch.setattr(conv_mod, "wait_for_item", AsyncMock(return_value=None))
+
+    await handler.emit()
+
+    send_idle_signal.assert_not_awaited()
 
 
 @pytest.mark.asyncio

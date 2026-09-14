@@ -12,7 +12,7 @@ from reachy_buddy.core.personality import Personality
 
 logger = logging.getLogger(__name__)
 
-ActionKind = Literal["speak", "ask", "joke", "quiet", "attend"]
+ActionKind = Literal["speak", "ask", "joke", "checkin", "break", "quiet", "attend"]
 
 
 @dataclass
@@ -59,6 +59,8 @@ class CuriosityEngine:
         seconds_since_speech: float,
         thought: Thought | None = None,
         novel_subject: str | None = None,
+        checkin: str | None = None,
+        break_due: bool = False,
         someone_present: bool = True,
     ) -> ActionIntent:
         """Pick the single most urgent action the current internal state justifies."""
@@ -75,7 +77,7 @@ class CuriosityEngine:
         cooldown_left = personality.speak_cooldown_s - (time.time() - self._last_proactive_at)
         if cooldown_left > 0:
             return ActionIntent("attend", "", 0.0, f"proactive cooldown has {cooldown_left:.0f}s left")
-        candidates = self._candidates(drives, seconds_since_speech, thought, novel_subject)
+        candidates = self._candidates(drives, seconds_since_speech, thought, novel_subject, checkin, break_due)
         if not candidates:
             return ActionIntent("attend", "", 0.0, "nothing crosses a threshold")
         chosen = max(candidates, key=lambda candidate: candidate.urgency)
@@ -100,6 +102,8 @@ class CuriosityEngine:
         seconds_since_speech: float,
         thought: Thought | None,
         novel_subject: str | None,
+        checkin: str | None,
+        break_due: bool,
     ) -> list[ActionIntent]:
         personality = self.personality
         candidates: list[ActionIntent] = []
@@ -137,4 +141,24 @@ class CuriosityEngine:
                         f"{personality.chattiness:.2f} x engagement {self._engagement:.2f}",
                     )
                 )
+        if checkin:
+            urgency = 0.55 + 0.2 * drives.social_energy * self._engagement
+            candidates.append(
+                ActionIntent(
+                    "checkin",
+                    checkin,
+                    urgency,
+                    f"unfinished-thread callback urgency {urgency:.2f}",
+                )
+            )
+        if break_due:
+            urgency = 0.5 + 0.3 * (1.0 - drives.focus)
+            candidates.append(
+                ActionIntent(
+                    "break",
+                    "Suggest a stretch or short break",
+                    urgency,
+                    f"long visit; focus {drives.focus:.2f} yielded break urgency {urgency:.2f}",
+                )
+            )
         return candidates

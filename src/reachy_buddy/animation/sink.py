@@ -2,9 +2,8 @@
 
 from typing import Protocol
 
-from reachy_mini import ReachyMini
-from reachy_mini.utils import create_head_pose
 from reachy_buddy.animation.pose import BodyPose
+from reachy_buddy.animation.pose_buffer import PoseBuffer, PoseBufferSink
 
 
 class PoseSink(Protocol):
@@ -15,14 +14,7 @@ class PoseSink(Protocol):
         ...
 
 
-class ReachyPoseSink:
-    """Sends planner poses to a Reachy Mini as one goto_target per update."""
+# Live motion goes through MovementManager via PoseBufferSink; do not goto_target here.
+MovementPoseSink = PoseBufferSink
 
-    def __init__(self, reachy: ReachyMini) -> None:
-        """Initialize with the robot handle used for all motion commands."""
-        self._reachy = reachy
-
-    def apply(self, pose: BodyPose, duration: float) -> None:
-        """Command head and antennas together via the SDK's min-jerk goto."""
-        head = create_head_pose(pitch=pose.pitch, yaw=pose.yaw, roll=pose.roll, degrees=True)
-        self._reachy.goto_target(head=head, antennas=[pose.antenna_left, pose.antenna_right], duration=duration)
+__all__ = ["PoseSink", "PoseBuffer", "PoseBufferSink", "MovementPoseSink"]

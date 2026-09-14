@@ -25,6 +25,13 @@ dependencies = [
     "mcp>=1.27.1,<2",
 ]
 
+[project.optional-dependencies]
+buddy = [
+    "opencv-python>=4.8.0",
+    "mediapipe>=0.10.14",
+    "face-recognition>=1.3.0",
+]
+
 [dependency-groups]
 dev = [
   "allure-pytest==2.16.0",
@@ -91,7 +98,7 @@ length-sort = true
 lines-after-imports = 2
 no-lines-before = ["standard-library", "local-folder"]
 known-local-folder = ["reachy_mini_conversation_app"]
-known-first-party = ["reachy_mini", "reachy_mini_dances_library"]
+known-first-party = ["reachy_mini", "reachy_mini_dances_library", "reachy_buddy"]
 split-on-trailing-comma = true
 
 [tool.ruff.format]

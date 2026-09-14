@@ -1,9 +1,9 @@
 """Entrypoint for the Reachy Mini conversation app."""
 
 from __future__ import annotations
-
-import sys
 import os
+import sys
+
 
 print("Executable:", sys.executable)
 print("GI_TYPELIB_PATH:", os.environ["GI_TYPELIB_PATH"])
@@ -333,6 +333,30 @@ def run(
     # assistant audio through that pipeline directly.
     robot.enable_wobbling()
 
+    buddy_session = None
+    from reachy_buddy.runtime_config import BuddyRuntimeConfig
+
+    buddy_runtime = BuddyRuntimeConfig.from_env()
+    if buddy_runtime.enabled:
+        try:
+            from reachy_buddy.session import BuddySession
+            from reachy_mini_conversation_app.config import config as app_config
+
+            buddy_session = BuddySession.build(
+                robot=robot,
+                handler=handler,
+                movement_manager=movement_manager,
+                profile_name=app_config.REACHY_MINI_CUSTOM_PROFILE,
+                runtime=buddy_runtime,
+                camera_enabled=not args.no_camera,
+            )
+            deps.buddy_presence_enabled = True
+            deps.buddy_session = buddy_session
+            buddy_session.start()
+        except Exception as e:
+            buddy_session = None
+            logger.warning("Desktop buddy failed to start; conversation app continues: %s", e)
+
     timeout_minutes = resolve_app_timeout_minutes()
     if timeout_minutes is not None:
         _start_inactivity_timeout_thread(timeout_minutes, stream_manager, logger, app_stop_event, run_go_to_sleep_tool)
@@ -366,6 +390,12 @@ def run(
     finally:
         if own_ui_server is not None:
             own_ui_server.should_exit = True
+
+        if buddy_session is not None:
+            try:
+                buddy_session.stop()
+            except Exception as e:
+                logger.debug("Error stopping desktop buddy: %s", e)
 
         # Stop the motion writes without changing the robot's posture. If
         # the shutdown came from the voice go_to_sleep tool the robot is

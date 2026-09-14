@@ -1,28 +1,37 @@
 """Object detection through OpenCV DNN; inactive until ONNX model files are configured."""
 
 import logging
+from typing import Protocol
 from pathlib import Path
-from dataclasses import dataclass
 
-import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from reachy_buddy.vision.object_types import Detection
+
 
 logger = logging.getLogger(__name__)
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 _INPUT_SIZE = 640
 _CONFIDENCE_THRESHOLD = 0.5
 _NMS_THRESHOLD = 0.4
 
 
-@dataclass(frozen=True)
-class Detection:
-    """One detected object: label, confidence, and pixel-space (x, y, width, height) box."""
+class _DnnNet(Protocol):
+    """The OpenCV DNN methods this detector uses."""
 
-    label: str
-    confidence: float
-    box: tuple[int, int, int, int]
+    def setInput(self, blob: object) -> None:
+        """Set the network input blob."""
+        ...
+
+    def forward(self) -> object:
+        """Run the network and return raw outputs."""
+        ...
 
 
 class ObjectDetector:
@@ -30,12 +39,15 @@ class ObjectDetector:
 
     def __init__(self, onnx_path: Path | None = None, labels_path: Path | None = None) -> None:
         """Load the model and labels; without both paths the detector stays disabled."""
-        self._net: cv2.dnn.Net | None = None
+        self._net: _DnnNet | None = None
         self._labels: list[str] = []
         if onnx_path is not None and labels_path is not None:
-            self._net = cv2.dnn.readNetFromONNX(str(onnx_path))
-            self._labels = labels_path.read_text(encoding="utf-8").splitlines()
-            logger.info("Object detector loaded %s (%d labels)", onnx_path.name, len(self._labels))
+            if cv2 is None:
+                logger.warning("Object detector disabled: OpenCV is not installed")
+            else:
+                self._net = cv2.dnn.readNetFromONNX(str(onnx_path))
+                self._labels = labels_path.read_text(encoding="utf-8").splitlines()
+                logger.info("Object detector loaded %s (%d labels)", onnx_path.name, len(self._labels))
         else:
             logger.info("Object detector disabled: no model configured")
 
@@ -46,7 +58,7 @@ class ObjectDetector:
 
     def detect(self, frame_bgr: NDArray[np.uint8]) -> list[Detection]:
         """Return detections for the frame; empty while no model is configured."""
-        if self._net is None:
+        if self._net is None or cv2 is None:
             return []
         blob = cv2.dnn.blobFromImage(frame_bgr, scalefactor=1 / 255.0, size=(_INPUT_SIZE, _INPUT_SIZE), swapRB=True)
         self._net.setInput(blob)

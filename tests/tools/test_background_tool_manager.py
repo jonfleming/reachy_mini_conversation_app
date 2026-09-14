@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import reachy_mini_conversation_app.tools.background_tool_manager as bg_mod
 from reachy_mini_conversation_app.tools.tool_constants import ToolState
 from reachy_mini_conversation_app.tools.background_tool_manager import (
     ToolProgress,
@@ -516,6 +517,40 @@ class TestStartUp:
 
         assert cb1.call_count == 1
         assert cb2.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_startup_callback_exception_does_not_stop_listener(self, manager: BackgroundToolManager) -> None:
+        """A failing result callback must not prevent later tool completions from being delivered."""
+        failing = AsyncMock(side_effect=RuntimeError("callback boom"))
+        succeeding = AsyncMock()
+        manager.start_up(tool_callbacks=[failing, succeeding])
+
+        await manager.start_tool("c1", _make_routine("first"), is_idle_tool_call=False)
+        await asyncio.sleep(0.1)
+        await manager.start_tool("c2", _make_routine("second"), is_idle_tool_call=False)
+        await asyncio.sleep(0.1)
+
+        assert failing.call_count == 2
+        assert succeeding.call_count == 2
+
+
+class TestRunToolLogging:
+    """Verify long-running tools emit stall warnings."""
+
+    @pytest.mark.asyncio
+    async def test_still_running_warning(
+        self,
+        manager: BackgroundToolManager,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A tool that outlives the stall interval is logged while it is still running."""
+        monkeypatch.setattr(bg_mod, "_STALL_LOG_INTERVAL_S", 0.05)
+        with caplog.at_level("WARNING", logger=bg_mod.logger.name):
+            await manager.start_tool("c1", _make_routine("slow", delay=0.16), is_idle_tool_call=False)
+            await asyncio.sleep(0.25)
+
+        assert any("still running" in record.message for record in caplog.records)
 
 
 class TestNotificationQueue:

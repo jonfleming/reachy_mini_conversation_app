@@ -12,6 +12,7 @@ default_tools = [
   "sweep_look",
   "remember",
   "forget",
+  "enroll_person",
   "head_tracking",
   "pollen_robotics_reachy_mini_search_tool__search_web",
   "pollen_robotics_reachy_mini_weather_tool__get_weather",

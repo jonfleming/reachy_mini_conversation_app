@@ -14,6 +14,7 @@ class Observation:
     last_seen: float
     kind: str = "ambient"
     salience: float = 0.5
+    center: tuple[float, float] | None = None
 
 
 def _format_age(seconds: float) -> str:
@@ -33,17 +34,34 @@ class WorldModel:
         self.retention_seconds = retention_seconds
         self._observations: dict[str, Observation] = {}
 
-    def record(self, label: str, confidence: float, kind: str = "ambient", salience: float = 0.5) -> None:
+    def record(
+        self,
+        label: str,
+        confidence: float,
+        kind: str = "ambient",
+        salience: float = 0.5,
+        center: tuple[float, float] | None = None,
+    ) -> None:
         """Insert or refresh an observation."""
         now = time.time()
         existing = self._observations.get(label)
         if existing is None:
-            self._observations[label] = Observation(label, confidence, now, now, kind, salience)
+            self._observations[label] = Observation(label, confidence, now, now, kind, salience, center)
         else:
             existing.confidence = confidence
             existing.last_seen = now
             existing.kind = kind
             existing.salience = salience
+            if center is not None:
+                existing.center = center
+
+    def drop(self, label: str) -> None:
+        """Forget a label immediately."""
+        self._observations.pop(label, None)
+
+    def of_kind(self, kind: str) -> list[Observation]:
+        """Return active observations with the given kind."""
+        return [observation for observation in self.active() if observation.kind == kind]
 
     def active(self) -> list[Observation]:
         """Return observations still within the retention window."""

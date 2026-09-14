@@ -49,6 +49,18 @@ def test_summary_text_renders_presence_with_age() -> None:
     assert "jon" in model.summary_text()
 
 
+def test_drop_removes_a_label_immediately() -> None:
+    """drop() forgets an observation without waiting for retention."""
+    model = WorldModel()
+    model.record("person", 0.9, kind="person")
+    model.record("Jon", 0.9, kind="person", center=(0.5, 0.4))
+    model.drop("person")
+
+    active = model.active()
+    assert [obs.label for obs in active] == ["Jon"]
+    assert active[0].center == (0.5, 0.4)
+
+
 def test_summary_text_for_an_empty_world() -> None:
     """An empty model says so plainly."""
     assert WorldModel().summary_text() == "Nothing observed yet."
