@@ -93,6 +93,31 @@ def to_realtime_tools_config(tool_specs: list[ToolSpec]) -> RealtimeToolsConfigP
     return realtime_tools
 
 
+def _event_attr(obj: object, name: str) -> object:
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _function_call_fields(item: object) -> tuple[str, str, str] | None:
+    if _event_attr(item, "type") != "function_call":
+        return None
+    name = _event_attr(item, "name")
+    if not isinstance(name, str) or not name:
+        return None
+    arguments = _event_attr(item, "arguments")
+    args_json = arguments if isinstance(arguments, str) else "{}"
+    call_id = _event_attr(item, "call_id")
+    return name, args_json, str(call_id) if call_id is not None else str(uuid.uuid4())
+
+
+def _response_output_items(event: object) -> list[object]:
+    output = _event_attr(_event_attr(event, "response"), "output")
+    return list(output) if isinstance(output, list) else []
+
+
 class HFNativeRateAudioPCM(TypedDict):
     """Hugging Face extension for native-rate PCM audio."""
 
@@ -809,13 +834,98 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                 completed_tool.id,
             )
 
+    async def _on_response_done(self, event: object) -> None:
+        response = _event_attr(event, "response")
+        status = _event_attr(response, "status")
+        items = _response_output_items(event)
+        output_types = [_event_attr(item, "type") for item in items]
+        function_calls = [fields for item in items if (fields := _function_call_fields(item)) is not None]
+        logger.info(
+            "Response done status=%s output_types=%s function_calls=%s in_flight=%s",
+            status,
+            output_types,
+            [(name, call_id) for name, _args, call_id in function_calls],
+            sorted(self._in_flight_tool_calls),
+        )
+        if not function_calls and not self._in_flight_tool_calls:
+            if status == "cancelled":
+                logger.info("Response cancelled; listening for the next turn")
+            else:
+                logger.info("Response finished with no tool calls")
+        for name, args_json, call_id in function_calls:
+            await self._start_model_tool_call(name, args_json, call_id, source="response.done")
+
+    async def _start_model_tool_call(
+        self,
+        tool_name: object,
+        args_json_str: object,
+        call_id: object,
+        *,
+        source: str,
+    ) -> None:
+        resolved_call_id = str(call_id) if call_id is not None else str(uuid.uuid4())
+        logger.info(
+            "Tool call from %s: tool_name=%r call_id=%s args=%s in_flight=%s",
+            source,
+            tool_name,
+            resolved_call_id,
+            args_json_str,
+            sorted(self._in_flight_tool_calls),
+        )
+        if resolved_call_id in self._in_flight_tool_calls:
+            logger.info("Ignoring duplicate tool call id=%s from %s", resolved_call_id, source)
+            return
+        if not isinstance(tool_name, str) or not isinstance(args_json_str, str):
+            logger.error(
+                "Invalid tool call from %s: tool_name=%s (type=%s), args=%s (type=%s), call_id=%s",
+                source,
+                tool_name,
+                type(tool_name).__name__,
+                args_json_str,
+                type(args_json_str).__name__,
+                resolved_call_id,
+            )
+            return
+
+        self._mark_activity("tool_call_received")
+        self._in_flight_tool_calls.add(resolved_call_id)
+        background_tool = await self.tool_manager.start_tool(
+            call_id=resolved_call_id,
+            tool_call_routine=ToolCallRoutine(
+                tool_name=tool_name,
+                args_json_str=args_json_str,
+                deps=self.deps,
+            ),
+            is_idle_tool_call=False,
+        )
+        await self.output_queue.put(
+            AdditionalOutputs(
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"🛠️ Used tool {tool_name} with args {args_json_str}. "
+                        f"The tool is now running. Tool ID: {background_tool.tool_id}"
+                    ),
+                },
+            ),
+        )
+        logger.info(
+            "Started background tool: %s (id=%s, call_id=%s, source=%s)",
+            tool_name,
+            background_tool.tool_id,
+            resolved_call_id,
+            source,
+        )
+
     async def _run_realtime_session(self) -> None:
         """Establish and manage a single realtime session."""
         tool_specs = get_tool_specs()
-        logger.info(
-            "Tools to be used in conversation: %s",
-            [tool["name"] for tool in tool_specs],
-        )
+        tool_names = [tool["name"] for tool in tool_specs]
+        logger.info("Tools advertised to the realtime model (%d): %s", len(tool_names), tool_names)
+        if "enroll_person" not in tool_names:
+            logger.warning(
+                "enroll_person is not in the advertised tool list; face enrollment will not be callable by the model"
+            )
         connect_kwargs: dict[str, Any] = {}
         if self._realtime_connect_query:
             connect_kwargs["extra_query"] = self._realtime_connect_query
@@ -824,9 +934,11 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                 session_config = self._get_session_config(tool_specs)
                 await conn.session.update(session=session_config)
                 logger.info(
-                    "Realtime session initialized with profile=%r voice=%r",
+                    "Realtime session initialized with profile=%r voice=%r tool_choice=%r tools=%d",
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
                     self.get_current_voice(),
+                    session_config.get("tool_choice"),
+                    len(tool_names),
                 )
             except Exception:
                 logger.exception("Realtime session.update failed; aborting startup")
@@ -899,13 +1011,10 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         self._mark_activity("assistant_speech_done")
                         self._response_done_event.set()
                         self._response_started_or_rejected_event.set()
-                        if self._in_flight_tool_calls:
-                            logger.info(
-                                "Response done with in-flight tools: %s",
-                                sorted(self._in_flight_tool_calls),
-                            )
-                        else:
-                            logger.debug("Response done")
+                        status = _event_attr(_event_attr(event, "response"), "status")
+                        if status == "cancelled":
+                            self.deps.movement_manager.set_listening(True)
+                        await self._on_response_done(event)
 
                     if event.type == "conversation.item.input_audio_transcription.delta":
                         self._mark_activity("user_transcription_delta")
@@ -932,7 +1041,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         self._mark_activity("user_transcription_completed")
                         raw_transcript = event.transcript or ""
                         transcript = raw_transcript.strip()
-                        logger.debug("User transcript: %s", raw_transcript)
+                        logger.info("User transcript: %s", transcript or raw_transcript)
                         self.deps.movement_manager.set_listening(False)
 
                         await self._cancel_partial_transcript_task()
@@ -953,7 +1062,7 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                     # Handle assistant transcription
                     if event.type == "response.output_audio_transcript.done":
                         self._mark_activity("assistant_transcript_done")
-                        logger.debug(f"Assistant transcript: {event.transcript}")
+                        logger.info("Assistant transcript: %s", event.transcript)
                         await self.output_queue.put(
                             AdditionalOutputs({"role": "assistant", "content": event.transcript})
                         )
@@ -976,55 +1085,27 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                         )
                     # ---- tool-calling plumbing ----
                     if event.type == "response.function_call_arguments.done":
-                        self._mark_activity("tool_call_received")
-                        tool_name = getattr(event, "name", None)
-                        args_json_str = getattr(event, "arguments", None)
-                        call_id: str = str(getattr(event, "call_id", uuid.uuid4()))
-
-                        logger.info(
-                            "Tool call received — tool_name=%r, call_id=%s, args=%s, in_flight=%s",
-                            tool_name,
-                            call_id,
-                            args_json_str,
-                            sorted(self._in_flight_tool_calls),
+                        await self._start_model_tool_call(
+                            getattr(event, "name", None),
+                            getattr(event, "arguments", None),
+                            getattr(event, "call_id", None),
+                            source=event.type,
                         )
-
-                        if not isinstance(tool_name, str) or not isinstance(args_json_str, str):
-                            logger.error(
-                                "Invalid tool call: tool_name=%s (type=%s), args=%s (type=%s), call_id=%s",
-                                tool_name,
-                                type(tool_name).__name__,
+                    elif event.type in {
+                        "response.output_item.added",
+                        "response.output_item.done",
+                        "conversation.item.created",
+                        "conversation.item.done",
+                    }:
+                        call = _function_call_fields(getattr(event, "item", None))
+                        if call is not None:
+                            name, args_json_str, item_call_id = call
+                            await self._start_model_tool_call(
+                                name,
                                 args_json_str,
-                                type(args_json_str).__name__,
-                                call_id,
+                                item_call_id,
+                                source=event.type,
                             )
-                            continue
-
-                        self._in_flight_tool_calls.add(call_id)
-                        background_tool = await self.tool_manager.start_tool(
-                            call_id=call_id,
-                            tool_call_routine=ToolCallRoutine(
-                                tool_name=tool_name,
-                                args_json_str=args_json_str,
-                                deps=self.deps,
-                            ),
-                            is_idle_tool_call=False,
-                        )
-
-                        await self.output_queue.put(
-                            AdditionalOutputs(
-                                {
-                                    "role": "assistant",
-                                    "content": f"🛠️ Used tool {tool_name} with args {args_json_str}. The tool is now running. Tool ID: {background_tool.tool_id}",
-                                },
-                            ),
-                        )
-                        logger.info(
-                            "Started background tool: %s (id=%s, call_id=%s)",
-                            tool_name,
-                            background_tool.tool_id,
-                            call_id,
-                        )
 
                     # server error
                     if event.type == "error":

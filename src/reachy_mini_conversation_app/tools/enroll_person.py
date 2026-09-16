@@ -13,7 +13,8 @@ class EnrollPerson(Tool):
     name = "enroll_person"
     description = (
         "Save the face currently in the camera as a named person so they can be recognized later. "
-        "Call this when someone tells you their name and they are in front of the camera."
+        "Call this when someone tells you their name, asks you to try again, or asks you to remember "
+        "or recognize their face. Use the name you already have if they do not repeat it."
     )
     needs_response = False
     parameters_schema = {
@@ -34,8 +35,10 @@ class EnrollPerson(Tool):
             return {"error": "name must be a non-empty string"}
         session = deps.buddy_session
         if session is None:
+            logger.warning("enroll_person skipped: buddy sidecar is not running")
             return {"error": "Buddy presence is not running"}
         display = name.strip()
+        logger.info("enroll_person called name=%s", display)
         if not session.enroll_person(display):
             logger.warning("enroll_person failed for %s", display)
             return {"error": "Could not enroll: no face in view or recognizer unavailable"}

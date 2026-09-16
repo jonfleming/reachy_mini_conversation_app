@@ -44,6 +44,7 @@ class PresenceTracker:
         self.lost_after_seconds = lost_after_seconds
         self._primary: TrackedFace | None = None
         self._face_count = 0
+        self._landmarks: list[NDArray[np.float64]] = []
 
     def observe(self, frame_bgr: NDArray[np.uint8], now: float | None = None) -> TrackedFace | None:
         """Detect faces in one frame and return the debounced primary face, if any."""
@@ -52,10 +53,12 @@ class PresenceTracker:
         if faces:
             landmarks = max(faces, key=face_size)
             self._primary = TrackedFace(face_center(landmarks), face_size(landmarks), now)
+            self._landmarks = [np.array(face, copy=True) for face in faces]
             self._face_count = len(faces)
         elif self._primary is not None and now - self._primary.last_seen >= self.lost_after_seconds:
             logger.debug("Presence lost after %.1fs without detection", now - self._primary.last_seen)
             self._primary = None
+            self._landmarks = []
             self._face_count = 0
         return self._primary
 
@@ -73,6 +76,11 @@ class PresenceTracker:
     def face_count(self) -> int:
         """Number of faces in the latest detection that found any."""
         return self._face_count
+
+    @property
+    def landmarks(self) -> list[NDArray[np.float64]]:
+        """Landmark arrays for faces in view, kept through the debounce window."""
+        return self._landmarks
 
 
 class PresenceLoop:
@@ -121,7 +129,7 @@ class PresenceLoop:
             frame = self._frame_source()
             if frame is not None:
                 with self._frame_lock:
-                    self._latest_frame = frame
+                    self._latest_frame = frame.copy()
                 self._tracker.observe(frame)
                 if self._tracker.present != present:
                     present = self._tracker.present

@@ -34,14 +34,23 @@ class FaceRecognizer:
         """Whether the face_recognition library is importable."""
         return face_recognition is not None
 
-    def enroll(self, name: str, frame_rgb: NDArray[np.uint8]) -> bool:
+    def enroll(
+        self,
+        name: str,
+        frame_rgb: NDArray[np.uint8],
+        locations: list[tuple[int, int, int, int]] | None = None,
+    ) -> bool:
         """Enroll the first face found in the frame; return False when none is found."""
         if face_recognition is None:
             logger.warning("Cannot enroll %s: face_recognition is not installed", name)
             return False
-        encodings = face_recognition.face_encodings(frame_rgb)
-        if not encodings:
+        boxes = self._face_locations(frame_rgb, locations)
+        if not boxes:
             logger.warning("Cannot enroll %s: no face in frame", name)
+            return False
+        encodings = face_recognition.face_encodings(frame_rgb, known_face_locations=boxes)
+        if not encodings:
+            logger.warning("Cannot enroll %s: encoding failed for %d box(es)", name, len(boxes))
             return False
         self._encodings.append(np.asarray(encodings[0], dtype=np.float64))
         self._labels.append(name)
@@ -49,15 +58,36 @@ class FaceRecognizer:
         logger.info("Enrolled %s (%d known faces)", name, len(self._labels))
         return True
 
-    def identify(self, frame_rgb: NDArray[np.uint8]) -> list[str]:
+    def identify(
+        self,
+        frame_rgb: NDArray[np.uint8],
+        locations: list[tuple[int, int, int, int]] | None = None,
+    ) -> list[str]:
         """Return one label per face in the frame ('unknown' when unmatched)."""
         if face_recognition is None or not self._encodings:
             return []
+        boxes = self._face_locations(frame_rgb, locations)
+        if not boxes:
+            return []
         labels: list[str] = []
-        for encoding in face_recognition.face_encodings(frame_rgb):
+        for encoding in face_recognition.face_encodings(frame_rgb, known_face_locations=boxes):
             matches = face_recognition.compare_faces(self._encodings, encoding, tolerance=self.tolerance)
             labels.append(self._labels[matches.index(True)] if any(matches) else UNKNOWN_LABEL)
         return labels
+
+    def _face_locations(
+        self,
+        frame_rgb: NDArray[np.uint8],
+        locations: list[tuple[int, int, int, int]] | None,
+    ) -> list[tuple[int, int, int, int]]:
+        if face_recognition is None:
+            return []
+        if locations:
+            return locations
+        found = face_recognition.face_locations(frame_rgb, number_of_times_to_upsample=1)
+        if found:
+            return found
+        return face_recognition.face_locations(frame_rgb, number_of_times_to_upsample=2)
 
     def save(self) -> None:
         """Write encodings and labels to store_path."""

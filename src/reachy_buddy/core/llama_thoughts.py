@@ -1,5 +1,6 @@
 """Optional llama.cpp thought generator; falls back to templates on any failure."""
 
+import re
 import logging
 
 import httpx
@@ -12,8 +13,10 @@ logger = logging.getLogger(__name__)
 _SYSTEM = (
     "You are Reachy's private inner monologue. Write one short observation "
     "(under 20 words) about what you are seeing or how long it has been quiet. "
-    "Do not address anyone. Do not use quotation marks."
+    "Do not address anyone. Do not use quotation marks. Do not write a chain of thought."
 )
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_MAX_THOUGHT_WORDS = 24
 
 
 class LlamaThoughtGenerator:
@@ -51,15 +54,16 @@ class LlamaThoughtGenerator:
                         {"role": "system", "content": _SYSTEM},
                         {"role": "user", "content": prompt},
                     ],
-                    "max_tokens": 48,
+                    "max_tokens": 96,
                     "temperature": 0.8,
+                    # Gemma/Qwen thinking templates often spend the whole budget
+                    # in a hidden channel and leave message.content empty.
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "enable_thinking": False,
                 },
             )
             response.raise_for_status()
-            payload = response.json()
-            text = str(payload["choices"][0]["message"]["content"]).strip().strip('"')
-            if not text:
-                raise ValueError("empty thought")
+            text = thought_text_from_payload(response.json())
             salience = 0.55
             if context.seconds_since_speech >= 60.0:
                 salience = 0.7
@@ -73,3 +77,46 @@ class LlamaThoughtGenerator:
     def close(self) -> None:
         """Close the HTTP client."""
         self._client.close()
+
+
+def thought_text_from_payload(payload: object) -> str:
+    """Pull a thought line out of an OpenAI-compatible chat completion body."""
+    if not isinstance(payload, dict):
+        raise ValueError("empty thought")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError("empty thought")
+    choice = choices[0]
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        message = {}
+    text = _as_text(message.get("content"))
+    if not text:
+        text = _as_text(message.get("reasoning_content")) or _as_text(message.get("reasoning"))
+    if not text:
+        text = _as_text(choice.get("text"))
+    text = _THINK_RE.sub("", text).strip().strip('"')
+    if not text:
+        raise ValueError(f"empty thought keys={sorted(message)}")
+    words = text.split()
+    if len(words) > _MAX_THOUGHT_WORDS:
+        text = " ".join(words[:_MAX_THOUGHT_WORDS])
+    return text
+
+
+def _as_text(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                for key in ("text", "content", "thinking", "reasoning"):
+                    chunk = item.get(key)
+                    if isinstance(chunk, str) and chunk.strip():
+                        parts.append(chunk.strip())
+                        break
+        return " ".join(parts)
+    return ""

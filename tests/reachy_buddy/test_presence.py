@@ -40,6 +40,7 @@ def test_presence_detects_primary_face() -> None:
     assert primary is not None
     assert primary.center == (pytest.approx(0.6), 0.5)
     assert primary.size == pytest.approx(0.4)
+    assert len(tracker.landmarks) == 2
 
 
 def test_presence_survives_brief_detection_gaps() -> None:
@@ -58,6 +59,7 @@ def test_presence_lapses_after_debounce_window() -> None:
     assert tracker.observe(_FRAME, now=1.9) is None
     assert not tracker.present
     assert tracker.face_count == 0
+    assert tracker.landmarks == []
 
 
 def test_presence_recovers_when_face_returns() -> None:

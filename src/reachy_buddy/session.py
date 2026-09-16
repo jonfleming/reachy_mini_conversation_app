@@ -35,8 +35,9 @@ from reachy_buddy.memory.relationships import (
     human_age,
     person_tag,
 )
+from reachy_buddy.vision.face_geometry import face_pixel_box
 from reachy_buddy.animation.pose_buffer import PoseBuffer, BuddyIdleMove, PoseBufferSink
-from reachy_buddy.conversation.awareness import extract_name, extract_activity
+from reachy_buddy.conversation.awareness import extract_name, extract_activity, wants_face_enroll
 from reachy_buddy.vision.face_recognition import UNKNOWN_LABEL, FaceRecognizer
 from reachy_buddy.vision.object_detection import ObjectDetector
 from reachy_mini_conversation_app.moves import MovementManager
@@ -150,6 +151,8 @@ class BuddySession:
         self._person_label: str | None = None
         self._asked_work_this_visit = False
         self._awaiting_name = False
+        self._pending_enroll_name: str | None = None
+        self._next_enroll_retry_at = 0.0
         self._awaiting_activity = False
         self._awaiting_reply = False
         self._last_vision_at = 0.0
@@ -258,10 +261,19 @@ class BuddySession:
             logger.warning("Cannot enroll %s: no recognizer or camera frame", display)
             return False
         rgb = frame[:, :, ::-1].copy()
-        if not self.recognizer.enroll(display, rgb):
+        locations = self._face_locations(frame)
+        if not self.recognizer.enroll(display, rgb, locations):
             return False
+        logger.info("Buddy enrolled current face as %s", display)
+        self._pending_enroll_name = None
         self._apply_identity(display, enrolled=True)
         return True
+
+    def _face_locations(self, frame: NDArray[np.uint8]) -> list[tuple[int, int, int, int]]:
+        if self.presence_loop is None:
+            return []
+        height, width = frame.shape[:2]
+        return [face_pixel_box(landmarks, width, height) for landmarks in self.presence_loop.tracker.landmarks]
 
     def _run_loop(self) -> None:
         while not self._stop.is_set():
@@ -279,6 +291,7 @@ class BuddySession:
         present, face_center = self._read_presence()
         self._refresh_vision(present)
         self._update_world(present)
+        self._maybe_retry_enroll(present)
         self.gaze.track_face(face_center)
         self.gaze.set_speaking(self._speaking)
         self.planner.set_engaged(self._speaking or present)
@@ -322,7 +335,7 @@ class BuddySession:
                 self._person_label = UNKNOWN_LABEL
             return
         rgb = frame[:, :, ::-1].copy()
-        labels = self.recognizer.identify(rgb)
+        labels = self.recognizer.identify(rgb, self._face_locations(frame))
         if not labels:
             if self._person_label is None:
                 self._person_label = UNKNOWN_LABEL
@@ -385,6 +398,8 @@ class BuddySession:
     def _reset_visit(self) -> None:
         self._asked_work_this_visit = False
         self._awaiting_name = False
+        self._pending_enroll_name = None
+        self._next_enroll_retry_at = 0.0
         self._awaiting_activity = False
         self._awaiting_reply = False
         self._person_label = None
@@ -675,15 +690,46 @@ class BuddySession:
         self._maybe_capture_name(text)
         self._maybe_capture_activity(text)
 
-    def _maybe_capture_name(self, text: str) -> None:
-        name = extract_name(text)
-        if name is None:
+    def _maybe_retry_enroll(self, present: bool) -> None:
+        name = self._pending_enroll_name
+        if name is None or not present or self._speaking:
             return
+        now = self._clock()
+        if now < self._next_enroll_retry_at:
+            return
+        self._next_enroll_retry_at = now + 2.0
+        logger.info("Retrying face enroll for %s", name)
+        self.enroll_person(name)
+
+    def _maybe_capture_name(self, text: str) -> None:
+        name = extract_name(text, allow_bare=self._awaiting_name)
+        if name is not None:
+            logger.info("Parsed spoken name %s from %r; attempting face enroll", name, text)
+            self._remember_and_enroll(name)
+            return
+        if not wants_face_enroll(text):
+            if self._awaiting_name:
+                logger.info("Heard a reply while waiting for a name, but did not parse one from %r", text)
+            return
+        pending = self._pending_enroll_name
+        if pending is None and self._person_label not in (None, UNKNOWN_LABEL):
+            pending = self._person_label
+        if pending is None:
+            logger.info("Heard a face-enroll request without a name yet: %r", text)
+            return
+        logger.info("Retrying face enroll for %s after %r", pending, text)
+        self._remember_and_enroll(pending)
+
+    def _remember_and_enroll(self, name: str) -> None:
         if self.enroll_person(name):
             self._awaiting_name = False
             return
-        self._apply_identity(name, enrolled=True)
+        logger.warning("Face enroll pending for %s; will retry while they stay in view", name)
+        self._pending_enroll_name = name
         self._awaiting_name = False
+        self._next_enroll_retry_at = self._clock() + 0.5
+        if self._person_label != name:
+            self._apply_identity(name, enrolled=False)
 
     def _maybe_capture_activity(self, text: str) -> None:
         activity = extract_activity(text)

@@ -33,6 +33,7 @@ class _Tracker:
 
     def __init__(self, face: TrackedFace | None) -> None:
         self.primary = face
+        self.landmarks: list[np.ndarray] = []
 
 
 class _Loop:
@@ -169,6 +170,54 @@ def test_stated_activity_is_queued_for_hindsight() -> None:
     activities = [item for item in session._pending_memories if TAG_ACTIVITY in item.tags]
     assert len(activities) == 1
     assert activities[0].content == "the CAD mount"
+
+
+def test_spoken_name_is_kept_when_face_enroll_fails() -> None:
+    """A parsed name still labels the visit if the camera cannot enroll."""
+    session, _spoken = _session()
+    session._awaiting_name = True
+    session._person_label = "unknown"
+
+    session._on_transcript("user", "my name is Jon", True)
+
+    assert session._person_label == "Jon"
+    assert session._awaiting_name is False
+    assert session._pending_enroll_name == "Jon"
+
+
+def test_failed_enroll_retries_while_the_face_stays() -> None:
+    """A missed encoding is retried on later ticks while presence holds."""
+    face = TrackedFace(center=(0.5, 0.5), size=0.2, last_seen=1.0)
+    recognizer = MagicMock()
+    recognizer.identify.return_value = []
+    recognizer.enroll.side_effect = [False, True]
+    session, _spoken = _session(face, recognizer=recognizer)
+    session.tick()
+    session._on_transcript("user", "my name is John", True)
+    assert session._pending_enroll_name == "John"
+    session._speaking = False
+    session._next_enroll_retry_at = 0.0
+
+    session.tick()
+
+    assert recognizer.enroll.call_count == 2
+    assert session._pending_enroll_name is None
+
+
+def test_try_again_retries_pending_face_enroll() -> None:
+    """Asking to try again re-attempts enroll with the name we already have."""
+    face = TrackedFace(center=(0.5, 0.5), size=0.2, last_seen=1.0)
+    recognizer = MagicMock()
+    recognizer.identify.return_value = []
+    recognizer.enroll.side_effect = [False, True]
+    session, _spoken = _session(face, recognizer=recognizer)
+    session._on_transcript("user", "My name is John.", True)
+    assert session._pending_enroll_name == "John"
+
+    session._on_transcript("user", "Let's try again my face.", True)
+
+    assert recognizer.enroll.call_count == 2
+    assert session._pending_enroll_name is None
 
 
 def test_unfinished_project_checkin_is_spoken_when_engaged() -> None:

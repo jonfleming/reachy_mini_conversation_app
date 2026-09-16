@@ -653,6 +653,107 @@ async def test_run_session_ignores_invalid_tool_call(monkeypatch: Any) -> None:
     assert not any("Used tool" in msg["content"] for msg in _messages(_drain(handler)))
 
 
+@pytest.mark.asyncio
+async def test_run_session_dispatches_function_call_on_response_done(monkeypatch: Any) -> None:
+    """Some realtime servers only attach function calls on response.done."""
+    handler = _session_handler(
+        monkeypatch,
+        (
+            _FakeEvent(
+                "response.done",
+                response=SimpleNamespace(
+                    status="completed",
+                    output=[
+                        SimpleNamespace(type="message"),
+                        SimpleNamespace(
+                            type="function_call",
+                            name="enroll_person",
+                            arguments='{"name": "Jon"}',
+                            call_id="enroll-1",
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    )
+    start_tool = AsyncMock(return_value=SimpleNamespace(tool_id="enroll-bg"))
+    monkeypatch.setattr(type(handler.tool_manager), "start_tool", start_tool)
+
+    await handler._run_realtime_session()
+
+    start_tool.assert_awaited_once()
+    assert any("Used tool enroll_person" in msg["content"] for msg in _messages(_drain(handler)))
+
+
+@pytest.mark.asyncio
+async def test_run_session_ignores_duplicate_function_call_events(monkeypatch: Any) -> None:
+    """Arguments-done and response.done for the same call_id start the tool once."""
+    handler = _session_handler(
+        monkeypatch,
+        (
+            _FakeEvent(
+                "response.function_call_arguments.done",
+                name="enroll_person",
+                arguments='{"name": "Jon"}',
+                call_id="enroll-1",
+            ),
+            _FakeEvent(
+                "response.done",
+                response=SimpleNamespace(
+                    status="completed",
+                    output=[
+                        SimpleNamespace(
+                            type="function_call",
+                            name="enroll_person",
+                            arguments='{"name": "Jon"}',
+                            call_id="enroll-1",
+                        )
+                    ],
+                ),
+            ),
+        ),
+    )
+    start_tool = AsyncMock(return_value=SimpleNamespace(tool_id="enroll-bg"))
+    monkeypatch.setattr(type(handler.tool_manager), "start_tool", start_tool)
+
+    await handler._run_realtime_session()
+
+    start_tool.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_session_logs_speech_only_response(monkeypatch: Any, caplog: Any) -> None:
+    """A spoken reply with no function_call is logged so missing tools are visible."""
+    handler = _session_handler(
+        monkeypatch,
+        (
+            _FakeEvent(
+                "response.done",
+                response=SimpleNamespace(status="completed", output=[SimpleNamespace(type="message")]),
+            ),
+        ),
+    )
+    with caplog.at_level("INFO", logger=hf_mod.logger.name):
+        await handler._run_realtime_session()
+
+    assert "Response finished with no tool calls" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_session_cancelled_response_resumes_listening(monkeypatch: Any, caplog: Any) -> None:
+    """A barged-in response does not look like a finished speech-only turn."""
+    handler = _session_handler(
+        monkeypatch,
+        (_FakeEvent("response.done", response=SimpleNamespace(status="cancelled", output=[])),),
+    )
+    with caplog.at_level("INFO", logger=hf_mod.logger.name):
+        await handler._run_realtime_session()
+
+    handler.deps.movement_manager.set_listening.assert_called_with(True)
+    assert "Response cancelled" in caplog.text
+    assert "Response finished with no tool calls" not in caplog.text
+
+
 def test_sanitize_tool_result_strips_camera_image() -> None:
     """Camera results drop the raw image bytes and flag that an image was attached."""
     sanitized = HuggingFaceRealtimeHandler._sanitize_tool_result_for_model("camera", {"b64_im": "x", "seen": "cat"})
