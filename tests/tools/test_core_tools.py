@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reachy_mini_conversation_app.tools import core_tools
-from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies, dispatch_tool_call
+from reachy_mini_conversation_fleming.tools import core_tools
+from reachy_mini_conversation_fleming.tools.core_tools import Tool, ToolDependencies, dispatch_tool_call
 
 
 class _EchoTool(Tool):

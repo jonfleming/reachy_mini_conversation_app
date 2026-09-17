@@ -16,7 +16,7 @@ concurrency:
 
 env:
   HF_SPACE_NAMESPACE: pollen-robotics
-  HF_SPACE_BASE_NAME: reachy_mini_conversation_app
+  HF_SPACE_BASE_NAME: reachy_mini_conversation_fleming
   HF_SPACE_SDK: static
   HF_PREVIEW_COMMENT_MARKER: "<!-- hf-pr-preview-space -->"
   PR_NUMBER: ${{ github.event.pull_request.number }}

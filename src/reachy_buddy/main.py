@@ -13,7 +13,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     runtime = BuddyRuntimeConfig.from_env()
     logger.info(
-        "Reachy Desktop Buddy is a sidecar of reachy-mini-conversation-app. "
+        "Reachy Desktop Buddy is a sidecar of reachy-mini-conversation-fleming. "
         "Set BUDDY_ENABLED=1 (currently %s) and launch the conversation app.",
         runtime.enabled,
     )

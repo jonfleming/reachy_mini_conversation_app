@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
+from reachy_mini_conversation_fleming.tools.core_tools import Tool, ToolDependencies
 
 
 logger = logging.getLogger(__name__)

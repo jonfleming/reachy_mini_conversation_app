@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
-from reachy_mini_conversation_app.tools.enroll_person import EnrollPerson
+from reachy_mini_conversation_fleming.tools.core_tools import ToolDependencies
+from reachy_mini_conversation_fleming.tools.enroll_person import EnrollPerson
 
 
 @pytest.mark.asyncio

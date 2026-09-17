@@ -2,8 +2,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
-from reachy_mini_conversation_app.tools.stop_dance import StopDance
+from reachy_mini_conversation_fleming.tools.core_tools import ToolDependencies
+from reachy_mini_conversation_fleming.tools.stop_dance import StopDance
 
 
 @pytest.mark.asyncio

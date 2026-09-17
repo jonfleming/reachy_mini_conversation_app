@@ -40,8 +40,8 @@ from reachy_buddy.animation.pose_buffer import PoseBuffer, BuddyIdleMove, PoseBu
 from reachy_buddy.conversation.awareness import extract_name, extract_activity, wants_face_enroll
 from reachy_buddy.vision.face_recognition import UNKNOWN_LABEL, FaceRecognizer
 from reachy_buddy.vision.object_detection import ObjectDetector
-from reachy_mini_conversation_app.moves import MovementManager
-from reachy_mini_conversation_app.conversation_handler import ConversationHandler
+from reachy_mini_conversation_fleming.moves import MovementManager
+from reachy_mini_conversation_fleming.conversation_handler import ConversationHandler
 
 
 logger = logging.getLogger(__name__)

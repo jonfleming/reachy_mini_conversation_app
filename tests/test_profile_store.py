@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY
-from reachy_mini_conversation_app.profile_store import (
+from reachy_mini_conversation_fleming.config import DEFAULT_PROFILES_DIRECTORY
+from reachy_mini_conversation_fleming.profile_store import (
     ProfileFormatError,
     write_profile,
     list_profile_names,
