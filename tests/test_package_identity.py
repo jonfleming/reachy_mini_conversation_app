@@ -14,5 +14,5 @@ def test_reachy_mini_apps_registers_fleming_entry_point() -> None:
 
     assert "reachy_mini_conversation_fleming" in apps
     assert apps["reachy_mini_conversation_fleming"].value == (
-        "reachy_mini_conversation_fleming.main:ReachyMiniConversationApp"
+        "reachy_mini_conversation_fleming.main:ReachyMiniConversationFleming"
     )

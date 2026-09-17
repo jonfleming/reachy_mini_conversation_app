@@ -55,7 +55,7 @@ exclude-newer = "7 days"
 "reachy-mini-dances-library" = false
 
 [project.entry-points."reachy_mini_apps"]
-reachy_mini_conversation_fleming = "reachy_mini_conversation_fleming.main:ReachyMiniConversationApp"
+reachy_mini_conversation_fleming = "reachy_mini_conversation_fleming.main:ReachyMiniConversationFleming"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

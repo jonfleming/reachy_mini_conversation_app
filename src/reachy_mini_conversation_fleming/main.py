@@ -410,8 +410,8 @@ def run(
         logger.info("Shutdown complete.")
 
 
-class ReachyMiniConversationApp(ReachyMiniApp):  # type: ignore[misc]
-    """Reachy Mini Apps entry point for the conversation app."""
+class ReachyMiniConversationFleming(ReachyMiniApp):  # type: ignore[misc]
+    """Reachy Mini Apps entry point for the Fleming conversation app."""
 
     custom_app_url = "http://0.0.0.0:7860/"
     dont_start_webserver = False
@@ -438,7 +438,7 @@ class ReachyMiniConversationApp(ReachyMiniApp):  # type: ignore[misc]
 
 
 if __name__ == "__main__":
-    app = ReachyMiniConversationApp()
+    app = ReachyMiniConversationFleming()
     try:
         app.wrapped_run()
     except KeyboardInterrupt:
