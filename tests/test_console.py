@@ -555,7 +555,7 @@ def test_personality_ops_load_builtin_default_profile() -> None:
     """The bulk personality API should retain the complete profile payload."""
     ops = build_personality_ops(MagicMock(), lambda: None)
     data = ops.load("default")
-    assert "Reachy Mini" in data["instructions"]
+    assert "Buddy" in data["instructions"]
     assert data["tools_text"]
     assert data["enabled_tools"]
     assert data["available_tools"]

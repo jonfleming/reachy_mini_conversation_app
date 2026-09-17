@@ -234,7 +234,7 @@ def test_external_profiles_keep_canonical_packaged_default(
     assert listing["choices"] == ["default", "guide"]
     assert listing["current"] == "default"
     assert listing["startup"] == "default"
-    assert "Reachy Mini" in loaded["instructions"]
+    assert "Buddy" in loaded["instructions"]
     assert not (external_profiles_root / "default").exists()
 
 
