@@ -762,7 +762,9 @@ def test_local_stream_launch_waits_for_missing_hf_target_without_starting_media(
 
     init_settings_ui = MagicMock()
     monkeypatch.setattr(stream, "_init_settings_ui_if_needed", init_settings_ui)
-    monkeypatch.setattr("reachy_mini_conversation_fleming.console.time.sleep", MagicMock(side_effect=KeyboardInterrupt))
+    monkeypatch.setattr(
+        "reachy_mini_conversation_fleming.console.time.sleep", MagicMock(side_effect=KeyboardInterrupt)
+    )
 
     stream.launch()
 
