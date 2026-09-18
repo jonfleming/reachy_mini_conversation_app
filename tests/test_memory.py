@@ -4,9 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import reachy_mini_conversation_fleming.prompts as prompts_mod
-from reachy_mini_conversation_fleming.config import config
-from reachy_mini_conversation_fleming.memory import (
+import reachy_desktop_buddy.prompts as prompts_mod
+from reachy_desktop_buddy.config import config
+from reachy_desktop_buddy.memory import (
     MAX_FACTS,
     MAX_FACT_CHARS,
     MemoryFact,
@@ -17,9 +17,9 @@ from reachy_mini_conversation_fleming.memory import (
     format_memory_for_prompt,
     memory_path_for_instance,
 )
-from reachy_mini_conversation_fleming.tools.forget import Forget
-from reachy_mini_conversation_fleming.tools.remember import Remember
-from reachy_mini_conversation_fleming.tools.core_tools import ToolDependencies
+from reachy_desktop_buddy.tools.forget import Forget
+from reachy_desktop_buddy.tools.remember import Remember
+from reachy_desktop_buddy.tools.core_tools import ToolDependencies
 
 
 def test_default_memory_path_uses_package_data_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -28,7 +28,7 @@ def test_default_memory_path_uses_package_data_dir(monkeypatch: pytest.MonkeyPat
 
     path = memory_path_for_instance()
 
-    assert path == tmp_path / "reachy_mini_conversation_fleming" / "memory.v1.json"
+    assert path == tmp_path / "reachy_desktop_buddy" / "memory.v1.json"
 
 
 def test_memory_store_adds_dedupes_caps_and_formats(tmp_path: Path) -> None:

@@ -2,10 +2,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reachy_mini_conversation_fleming.tools import forget as forget_module
-from reachy_mini_conversation_fleming.memory import MemoryFact, ForgetMemoryResult
-from reachy_mini_conversation_fleming.tools.forget import Forget
-from reachy_mini_conversation_fleming.tools.core_tools import ToolDependencies
+from reachy_desktop_buddy.tools import forget as forget_module
+from reachy_desktop_buddy.memory import MemoryFact, ForgetMemoryResult
+from reachy_desktop_buddy.tools.forget import Forget
+from reachy_desktop_buddy.tools.core_tools import ToolDependencies
 
 
 def _deps() -> ToolDependencies:

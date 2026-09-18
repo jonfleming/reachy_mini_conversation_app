@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import reachy_mini_conversation_fleming.tools.background_tool_manager as bg_mod
-from reachy_mini_conversation_fleming.tools.tool_constants import ToolState
-from reachy_mini_conversation_fleming.tools.background_tool_manager import (
+import reachy_desktop_buddy.tools.background_tool_manager as bg_mod
+from reachy_desktop_buddy.tools.tool_constants import ToolState
+from reachy_desktop_buddy.tools.background_tool_manager import (
     ToolProgress,
     BackgroundTool,
     ToolCallRoutine,

@@ -15,7 +15,7 @@ pytest.importorskip("mcp.server.fastmcp")
 
 from mcp.server.fastmcp import FastMCP
 
-from reachy_mini_conversation_fleming.mcp_client import (
+from reachy_desktop_buddy.mcp_client import (
     RemoteToolSpec,
     McpTransportError,
     McpToolTimeoutError,

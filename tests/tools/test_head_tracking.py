@@ -2,8 +2,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reachy_mini_conversation_fleming.tools.core_tools import ToolDependencies
-from reachy_mini_conversation_fleming.tools.head_tracking import HeadTracking
+from reachy_desktop_buddy.tools.core_tools import ToolDependencies
+from reachy_desktop_buddy.tools.head_tracking import HeadTracking
 
 
 @pytest.mark.asyncio

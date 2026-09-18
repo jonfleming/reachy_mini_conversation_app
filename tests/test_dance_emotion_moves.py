@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import numpy as np
 
 from reachy_mini.utils import create_head_pose
-from reachy_mini_conversation_fleming.dance_emotion_moves import GotoQueueMove, DanceQueueMove
+from reachy_desktop_buddy.dance_emotion_moves import GotoQueueMove, DanceQueueMove
 
 
 def test_goto_evaluate_at_start_returns_start_state() -> None:

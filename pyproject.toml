@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reachy_mini_conversation_fleming"
+name = "reachy_desktop_buddy"
 version = "1.0.1"
 authors = [{ name = "Pollen Robotics", email = "contact@pollen-robotics.com" }]
 description = ""
@@ -44,7 +44,7 @@ dev = [
 ]
 
 [project.scripts]
-reachy-mini-conversation-fleming = "reachy_mini_conversation_fleming.main:main"
+reachy-desktop-buddy = "reachy_desktop_buddy.main:main"
 reachy-buddy = "reachy_buddy.main:main"
 
 [tool.uv]
@@ -55,7 +55,7 @@ exclude-newer = "7 days"
 "reachy-mini-dances-library" = false
 
 [project.entry-points."reachy_mini_apps"]
-reachy_mini_conversation_fleming = "reachy_mini_conversation_fleming.main:ReachyMiniConversationFleming"
+reachy_desktop_buddy = "reachy_desktop_buddy.main:ReachyDesktopBuddy"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -65,7 +65,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-reachy_mini_conversation_fleming = [
+reachy_desktop_buddy = [
   "static/**/*",
   ".env.example",
 ]
@@ -97,7 +97,7 @@ ignore = [
 length-sort = true
 lines-after-imports = 2
 no-lines-before = ["standard-library", "local-folder"]
-known-local-folder = ["reachy_mini_conversation_fleming"]
+known-local-folder = ["reachy_desktop_buddy"]
 known-first-party = ["reachy_mini", "reachy_mini_dances_library", "reachy_buddy"]
 split-on-trailing-comma = true
 

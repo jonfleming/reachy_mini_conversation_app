@@ -2,9 +2,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reachy_mini_conversation_fleming.tools.move_head import MoveHead
-from reachy_mini_conversation_fleming.tools.core_tools import ToolDependencies
-from reachy_mini_conversation_fleming.dance_emotion_moves import GotoQueueMove
+from reachy_desktop_buddy.tools.move_head import MoveHead
+from reachy_desktop_buddy.tools.core_tools import ToolDependencies
+from reachy_desktop_buddy.dance_emotion_moves import GotoQueueMove
 
 
 def _deps() -> ToolDependencies:

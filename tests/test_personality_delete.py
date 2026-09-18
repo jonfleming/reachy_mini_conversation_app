@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import reachy_mini_conversation_fleming.personality as personality_mod
-from reachy_mini_conversation_fleming.config import config
-from reachy_mini_conversation_fleming.personality import delete_personality
-from reachy_mini_conversation_fleming.profile_toolsets import (
+import reachy_desktop_buddy.personality as personality_mod
+from reachy_desktop_buddy.config import config
+from reachy_desktop_buddy.personality import delete_personality
+from reachy_desktop_buddy.profile_toolsets import (
     read_profile_tool_override,
     write_profile_tool_override,
 )
-from reachy_mini_conversation_fleming.personality_routes import (
+from reachy_desktop_buddy.personality_routes import (
     RouteError,
     PersonalityOps,
     build_personality_ops,
@@ -119,7 +119,7 @@ def test_locked_mode_rejects_profile_creation_and_deletion(
 ) -> None:
     """Locked mode prevents profile creation and deletion."""
     monkeypatch.setattr(config, "INSTANCE_PATH", tmp_path)
-    monkeypatch.setattr("reachy_mini_conversation_fleming.personality_routes.LOCKED_PROFILE", "default")
+    monkeypatch.setattr("reachy_desktop_buddy.personality_routes.LOCKED_PROFILE", "default")
     ops = _ops()
 
     with pytest.raises(RouteError) as save_error:
