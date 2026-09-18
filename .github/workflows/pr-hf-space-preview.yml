@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  HF_SPACE_NAMESPACE: pollen-robotics
-  HF_SPACE_BASE_NAME: reachy_mini_conversation_app
+  HF_SPACE_NAMESPACE: fleming-ai
+  HF_SPACE_BASE_NAME: reachy_desktop_buddy
   HF_SPACE_SDK: static
   HF_PREVIEW_COMMENT_MARKER: "<!-- hf-pr-preview-space -->"
   PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -46,7 +46,19 @@ jobs:
           lfs: true
           persist-credentials: false
 
+      - name: Check Hugging Face token availability
+        id: hf-token
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -n "${HF_TOKEN}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Sync preview space
+        if: steps.hf-token.outputs.available == 'true'
         id: sync
         continue-on-error: true
         uses: huggingface/hub-sync@da166beda9a9aff15d1de9a82c6dc86c410ea3ee  # v0.2.1
@@ -57,6 +69,46 @@ jobs:
           repo_type: space
           space_sdk: ${{ env.HF_SPACE_SDK }}
           private: true
+
+      - name: Comment preview skipped (missing HF token)
+        if: steps.hf-token.outputs.available != 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          HF_PREVIEW_COMMENT_MARKER: ${{ env.HF_PREVIEW_COMMENT_MARKER }}
+        with:
+          script: |
+            const marker = process.env.HF_PREVIEW_COMMENT_MARKER;
+            const body = [
+              marker,
+              `⚠️ **Preview space sync skipped** because \`HF_TOKEN\` is not available in this workflow run.`,
+            ].join("\n");
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+
+            const existing = comments.find((comment) =>
+              comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
 
       - name: Ensure preview space stays private
         if: steps.sync.outcome == 'success'
@@ -159,7 +211,7 @@ jobs:
             }
 
       - name: Fail job if sync failed
-        if: steps.sync.outcome == 'failure'
+        if: steps.hf-token.outputs.available == 'true' && steps.sync.outcome == 'failure'
         run: exit 1
 
   delete-preview:

@@ -85,9 +85,8 @@ class FaceRecognizer:
         if locations:
             return locations
         found = face_recognition.face_locations(frame_rgb, number_of_times_to_upsample=1)
-        if found:
-            return found
-        return face_recognition.face_locations(frame_rgb, number_of_times_to_upsample=2)
+        boxes = found or face_recognition.face_locations(frame_rgb, number_of_times_to_upsample=2)
+        return [(int(top), int(right), int(bottom), int(left)) for top, right, bottom, left in boxes]
 
     def save(self) -> None:
         """Write encodings and labels to store_path."""

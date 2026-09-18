@@ -7,16 +7,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import reachy_mini_conversation_app.config as config_mod
-import reachy_mini_conversation_app.tool_spaces as tool_spaces_mod
-from reachy_mini_conversation_app.mcp_client import McpToolTimeoutError, McpToolInvocationError
-from reachy_mini_conversation_app.tool_spaces import (
+import reachy_desktop_buddy.config as config_mod
+import reachy_desktop_buddy.tool_spaces as tool_spaces_mod
+from reachy_desktop_buddy.mcp_client import McpToolTimeoutError, McpToolInvocationError
+from reachy_desktop_buddy.tool_spaces import (
     InstalledToolSpace,
     InstalledToolSpaceTool,
     InstalledToolSpacesManifest,
     write_installed_tool_spaces,
 )
-from reachy_mini_conversation_app.profile_store import write_profile
+from reachy_desktop_buddy.profile_store import write_profile
 
 
 SEARCH_SPACE_SLUG = "example/search-tool"
@@ -28,11 +28,11 @@ SEARCH_MCP_URL = "https://example-search-tool.hf.space/gradio_api/mcp/"
 
 def _reload_core_tools() -> ModuleType:
     for module_name in list(sys.modules):
-        if module_name.startswith("reachy_mini_conversation_app.tools."):
+        if module_name.startswith("reachy_desktop_buddy.tools."):
             sys.modules.pop(module_name, None)
 
-    sys.modules.pop("reachy_mini_conversation_app.tools.core_tools", None)
-    return importlib.import_module("reachy_mini_conversation_app.tools.core_tools")
+    sys.modules.pop("reachy_desktop_buddy.tools.core_tools", None)
+    return importlib.import_module("reachy_desktop_buddy.tools.core_tools")
 
 
 def _installed_search_space() -> InstalledToolSpace:

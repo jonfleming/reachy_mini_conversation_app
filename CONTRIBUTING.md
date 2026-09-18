@@ -35,8 +35,8 @@ We welcome all contributions: bug fixes, new features, documentation, testing, a
 
 This project is mirrored to a Hugging Face Space.
 
-- Tagged releases are automatically synchronized to [pollen-robotics/reachy_mini_conversation_app](https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app)
-- Pull requests opened from branches in this repository automatically get a private preview Space named `reachy_mini_conversation_app_PR<PR number>`
+- Tagged releases are automatically synchronized to [fleming-ai/reachy_desktop_buddy](https://huggingface.co/spaces/fleming-ai/reachy_desktop_buddy)
+- Pull requests opened from branches in this repository automatically get a private preview Space named `reachy_desktop_buddy_PR<PR number>`
 - Preview Spaces are refreshed on each push to the PR branch and removed automatically when the PR closes
 - This sync is handled by GitHub Actions and requires no manual steps.
 - Contributors do not need to interact with the Space on Hugging Face hub directly.

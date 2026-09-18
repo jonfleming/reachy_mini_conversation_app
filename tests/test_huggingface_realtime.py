@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
-import reachy_mini_conversation_app.conversation_handler as conv_mod
-import reachy_mini_conversation_app.huggingface_realtime as hf_mod
-from reachy_mini_conversation_app.config import config, get_default_voice
-from reachy_mini_conversation_app.streaming import AdditionalOutputs
-from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
-from reachy_mini_conversation_app.huggingface_realtime import HuggingFaceRealtimeHandler
-from reachy_mini_conversation_app.tools.background_tool_manager import ToolState, ToolNotification
+import reachy_desktop_buddy.conversation_handler as conv_mod
+import reachy_desktop_buddy.huggingface_realtime as hf_mod
+from reachy_desktop_buddy.config import config, get_default_voice
+from reachy_desktop_buddy.streaming import AdditionalOutputs
+from reachy_desktop_buddy.tools.core_tools import ToolDependencies
+from reachy_desktop_buddy.huggingface_realtime import HuggingFaceRealtimeHandler
+from reachy_desktop_buddy.tools.background_tool_manager import ToolState, ToolNotification
 
 
 HF_DEFAULT_VOICE = get_default_voice()
@@ -383,7 +383,7 @@ async def test_build_realtime_client_local_uses_explicit_hf_token_only(
             "0123456789abcdef",
             None,
             {
-                "User-Agent": "reachy-mini-conversation-app",
+                "User-Agent": "reachy-desktop-buddy",
                 "X-Reachy-Mini-Authorization": "Bearer hf-secret",
             },
             "hf-secret",
@@ -395,19 +395,19 @@ async def test_build_realtime_client_local_uses_explicit_hf_token_only(
             None,
             None,
             {
-                "User-Agent": "reachy-mini-conversation-app",
+                "User-Agent": "reachy-desktop-buddy",
                 "X-Reachy-Mini-Authorization": "Bearer hf-cached",
             },
             "hf-cached",
             {},
         ),
-        (None, None, None, None, {"User-Agent": "reachy-mini-conversation-app"}, "DUMMY", {}),
+        (None, None, None, None, {"User-Agent": "reachy-desktop-buddy"}, "DUMMY", {}),
         (
             None,
             None,
             None,
             TimeoutError("status unavailable"),
-            {"User-Agent": "reachy-mini-conversation-app"},
+            {"User-Agent": "reachy-desktop-buddy"},
             "DUMMY",
             {},
         ),

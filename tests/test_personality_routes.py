@@ -10,22 +10,22 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from reachy_mini.apps.jsonrpc_server import JsonRpcServer
-import reachy_mini_conversation_app.personality as personality_mod
-from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config
-from reachy_mini_conversation_app.profile_store import (
+import reachy_desktop_buddy.personality as personality_mod
+from reachy_desktop_buddy.config import DEFAULT_PROFILES_DIRECTORY, config
+from reachy_desktop_buddy.profile_store import (
     write_profile,
     read_profile_from_directory,
     read_packaged_default_profile,
 )
-from reachy_mini_conversation_app.profile_toolsets import (
+from reachy_desktop_buddy.profile_toolsets import (
     read_profile_tool_override,
     write_profile_tool_override,
 )
-from reachy_mini_conversation_app.personality_routes import (
+from reachy_desktop_buddy.personality_routes import (
     build_personality_ops,
     register_personality_methods,
 )
-from reachy_mini_conversation_app.profile_tool_routes import register_profile_tool_methods
+from reachy_desktop_buddy.profile_tool_routes import register_profile_tool_methods
 
 
 def _rpc_call(client: TestClient, method: str, params: dict[str, object] | None = None) -> dict[str, Any]:
@@ -234,7 +234,7 @@ def test_external_profiles_keep_canonical_packaged_default(
     assert listing["choices"] == ["default", "guide"]
     assert listing["current"] == "default"
     assert listing["startup"] == "default"
-    assert "Reachy Mini" in loaded["instructions"]
+    assert "Buddy" in loaded["instructions"]
     assert not (external_profiles_root / "default").exists()
 
 

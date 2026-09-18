@@ -3114,7 +3114,7 @@ wheels = [
 ]
 
 [[package]]
-name = "reachy-mini-conversation-app"
+name = "reachy-desktop-buddy"
 version = "1.0.1"
 source = { editable = "." }
 dependencies = [
