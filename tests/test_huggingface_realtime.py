@@ -721,6 +721,38 @@ async def test_run_session_ignores_duplicate_function_call_events(monkeypatch: A
     start_tool.assert_awaited_once()
 
 
+def test_function_call_fields_accepts_dict_arguments() -> None:
+    """Some servers send function-call arguments as an object, not a JSON string."""
+    fields = hf_mod._function_call_fields(
+        {"type": "function_call", "name": "get_weather", "arguments": {"location": "Seattle"}, "call_id": "w1"}
+    )
+    assert fields == ("get_weather", '{"location": "Seattle"}', "w1")
+
+
+def test_function_call_fields_reads_nested_item() -> None:
+    """output_item events wrap the function call under item."""
+    fields = hf_mod._function_call_fields(
+        SimpleNamespace(
+            type="output_item",
+            item=SimpleNamespace(
+                type="function",
+                name="get_weather",
+                arguments='{"location": "Seattle"}',
+                call_id="w1",
+            ),
+        )
+    )
+    assert fields == ("get_weather", '{"location": "Seattle"}', "w1")
+
+
+def test_response_output_items_accepts_tuple() -> None:
+    """HF payloads may expose output as a sequence that is not a list."""
+    event = SimpleNamespace(response=SimpleNamespace(output=(SimpleNamespace(type="message"),)))
+    items = hf_mod._response_output_items(event)
+    assert len(items) == 1
+    assert hf_mod._event_attr(items[0], "type") == "message"
+
+
 @pytest.mark.asyncio
 async def test_run_session_logs_speech_only_response(monkeypatch: Any, caplog: Any) -> None:
     """A spoken reply with no function_call is logged so missing tools are visible."""
@@ -737,6 +769,18 @@ async def test_run_session_logs_speech_only_response(monkeypatch: Any, caplog: A
         await handler._run_realtime_session()
 
     assert "Response finished with no tool calls" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_session_logs_empty_completed_response(monkeypatch: Any, caplog: Any) -> None:
+    """A completed turn with no output is a stall signal, not a quiet success."""
+    handler = _session_handler(
+        monkeypatch,
+        (_FakeEvent("response.done", response=SimpleNamespace(status="completed", output=[])),),
+    )
+    with caplog.at_level("WARNING", logger=hf_mod.logger.name):
+        await handler._run_realtime_session()
+    assert "Completed response had no output items" in caplog.text
 
 
 @pytest.mark.asyncio

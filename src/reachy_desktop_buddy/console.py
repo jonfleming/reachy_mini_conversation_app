@@ -128,6 +128,7 @@ class LocalStream:
         self._settings_initialized = False
         self._asyncio_loop = None
         self._mic_muted = False  # mic starts live; the UI toggles it via the settings API
+        self._playback_volume = 1.0  # speaker gain 0..1; the UI slider writes this via /rpc
         self._backend_connection_state = "not_started"
         self._backend_error: str | None = None
         self._backend_retry_delay = BACKEND_RETRY_DELAY_SECONDS
@@ -601,6 +602,19 @@ class LocalStream:
                 logger.info("Microphone %s via /rpc", "muted" if self._mic_muted else "unmuted")
             return {"muted": self._mic_muted}
 
+        @rpc.method("conversation.volume")  # type: ignore[untyped-decorator]
+        def _rpc_volume(params: dict[str, object]) -> dict[str, object]:
+            if "volume" in params:
+                raw = params["volume"]
+                if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                    raise JsonRpcError("volume must be a number", reason="invalid_volume", code=-32602)
+                volume = float(raw)
+                if volume < 0.0 or volume > 1.0:
+                    raise JsonRpcError("volume must be between 0 and 1", reason="invalid_volume", code=-32602)
+                self._playback_volume = volume
+                logger.info("Playback volume set to %.2f via /rpc", volume)
+            return {"volume": self._playback_volume}
+
         @rpc.method("backend.config")  # type: ignore[untyped-decorator]
         def _rpc_backend_config(params: dict[str, object]) -> dict[str, object]:
             hf_selection = get_hf_connection_selection()
@@ -920,6 +934,7 @@ class LocalStream:
 
                 # Cast if needed
                 audio_frame = audio_to_float32(audio_data)
+                audio_frame = np.clip(audio_frame * self._playback_volume, -1.0, 1.0)
 
                 self._robot.media.push_audio_sample(audio_frame)
                 self._emit_level("assistant", audio_frame)

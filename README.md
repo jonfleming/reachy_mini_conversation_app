@@ -191,8 +191,13 @@ The app runs in console mode. Add `--ui` to serve the web interface at http://12
 # Audio-only conversation (no camera)
 reachy-desktop-buddy --no-camera
 
+<<<<<<< Updated upstream
 # Launch with the minimal web UI for personality/mic/settings control
 reachy-desktop-buddy --ui
+=======
+# Launch with the minimal web UI for personality/mic/volume/settings control
+reachy-mini-conversation-app --ui
+>>>>>>> Stashed changes
 ```
 
 ## LLM tools exposed to the assistant

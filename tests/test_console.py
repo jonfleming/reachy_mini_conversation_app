@@ -112,6 +112,25 @@ def test_mic_reports_and_toggles_mute_state_over_rpc() -> None:
     assert LocalStream(MagicMock(), robot)._mic_muted is False
 
 
+def test_volume_reports_and_sets_gain_over_rpc() -> None:
+    """Playback starts at full gain; conversation.volume reads and writes 0..1."""
+    app = FastAPI()
+    robot = SimpleNamespace(media=SimpleNamespace(audio=None, backend=None))
+    stream = LocalStream(MagicMock(), robot, settings_app=app)
+    stream._init_settings_ui_if_needed()
+
+    assert _rpc_call(app, "conversation.volume")["result"] == {"volume": 1.0}
+    assert _rpc_call(app, "conversation.volume", {"volume": 0.25})["result"] == {"volume": 0.25}
+    assert stream._playback_volume == 0.25
+    assert _rpc_call(app, "conversation.volume", {"volume": 0})["result"] == {"volume": 0.0}
+
+    error = _rpc_call(app, "conversation.volume", {"volume": 1.5})
+    assert error["error"]["data"]["reason"] == "invalid_volume"
+    assert stream._playback_volume == 0.0
+
+    assert LocalStream(MagicMock(), robot)._playback_volume == 1.0
+
+
 def test_rest_api_is_removed_in_favor_of_rpc() -> None:
     """The /api/v1 REST + SSE surface is gone; control is JSON-RPC over /rpc."""
     app = FastAPI()
@@ -911,6 +930,22 @@ async def test_play_loop_pushes_mono_audio_as_float32() -> None:
 
 
 @pytest.mark.asyncio
+async def test_play_loop_scales_frames_by_playback_volume() -> None:
+    """Speaker frames are multiplied by the current playback volume."""
+    robot = _audio_robot(push_audio_sample=MagicMock())
+    handler = MagicMock()
+    stream = LocalStream(handler, robot)
+    stream._playback_volume = 0.5
+    samples = np.full(4, 0.8, dtype=np.float32)
+    handler.emit = AsyncMock(side_effect=_stop_after(stream, (24000, samples)))
+
+    await stream.play_loop()
+
+    pushed = robot.media.push_audio_sample.call_args.args[0]
+    np.testing.assert_allclose(pushed, 0.4)
+
+
+@pytest.mark.asyncio
 async def test_play_loop_downmixes_stereo_before_pushing() -> None:
     """A stereo frame is reduced to a single mono channel before playback."""
     robot = _audio_robot(push_audio_sample=MagicMock())
@@ -982,7 +1017,7 @@ def _rpc_robot() -> SimpleNamespace:
 
 
 def test_rpc_status_and_mic_over_websocket() -> None:
-    """conversation.status/mic are reachable over the /rpc JSON-RPC WebSocket."""
+    """conversation.status/mic/volume are reachable over the /rpc JSON-RPC WebSocket."""
     app = FastAPI()
     stream = LocalStream(MagicMock(), _rpc_robot(), settings_app=app)
     stream._init_settings_ui_if_needed()
@@ -996,7 +1031,12 @@ def test_rpc_status_and_mic_over_websocket() -> None:
         ws.send_json({"jsonrpc": "2.0", "id": "2", "method": "conversation.mic", "params": {"muted": True}})
         resp = ws.receive_json()
         assert resp["result"] == {"muted": True}
+
+        ws.send_json({"jsonrpc": "2.0", "id": "3", "method": "conversation.volume", "params": {"volume": 0.4}})
+        resp = ws.receive_json()
+        assert resp["result"] == {"volume": 0.4}
     assert stream._mic_muted is True
+    assert stream._playback_volume == 0.4
 
 
 def test_rpc_interrupt_broadcasts_turn_listening() -> None:

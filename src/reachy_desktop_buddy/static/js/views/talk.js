@@ -2,9 +2,18 @@
  * Talk view: conversation orb driven by the RPC activity stream.
  * Audio I/O runs entirely in Python; the orb doubles as the mic toggle.
  * Robot stays live, tapping the orb only mutes or unmutes the user's mic.
+ * The slider next to the orb scales speaker playback (0..1) via conversation.volume.
  */
 
-import { applyPersonality, getMicState, listPersonalities, setMicMuted, subscribe } from "../api.js";
+import {
+  applyPersonality,
+  getMicState,
+  getPlaybackVolume,
+  listPersonalities,
+  setMicMuted,
+  setPlaybackVolume,
+  subscribe,
+} from "../api.js";
 import { ORB_STATES } from "../constants.js";
 import { createOrb, mapActivityToState } from "../orb.js";
 import { consumePendingApply } from "../pending-apply.js";
@@ -27,9 +36,16 @@ export async function mountTalkView({ outlet, signal }) {
     console.warn("Failed to load microphone state", error);
     return null;
   });
+  const volumeStatePromise = getPlaybackVolume().catch((error) => {
+    console.warn("Failed to load playback volume", error);
+    return null;
+  });
   let muted = false;
   let micReady = false;
   let togglePending = false;
+  let volumeReady = false;
+  let volumePending = false;
+  let queuedVolume = null;
   let activePersonality = null;
   let subscription = null;
 
@@ -53,12 +69,24 @@ export async function mountTalkView({ outlet, signal }) {
   orb.root.addEventListener("click", onMicTap);
   syncMicAria();
 
+  const volumeSlider = h("input", {
+    type: "range",
+    class: "talk__volume-slider",
+    min: "0",
+    max: "100",
+    step: "1",
+    value: "100",
+    disabled: true,
+    "aria-label": "Speaker volume",
+  });
+  volumeSlider.addEventListener("input", onVolumeInput);
+
   signal.addEventListener("abort", cleanup, { once: true });
 
   const view = h(
     "section",
     { class: "view view--talk" },
-    h("div", { class: "talk__orb-wrap" }, orb.root),
+    h("div", { class: "talk__orb-row" }, h("div", { class: "talk__orb-wrap" }, orb.root), volumeSlider),
     caption
   );
   outlet.replaceChildren(view);
@@ -82,21 +110,31 @@ export async function mountTalkView({ outlet, signal }) {
     void refreshPersonalityState();
   }
 
-  const micState = await micStatePromise;
+  const [micState, volumeState] = await Promise.all([micStatePromise, volumeStatePromise]);
   if (micState) muted = Boolean(micState.muted);
   if (signal.aborted) return;
   micReady = true;
   orb.root.disabled = false;
   syncMicAria();
+  applyVolumeState(volumeState);
+  volumeReady = true;
+  volumeSlider.disabled = false;
 
   subscription = subscribeConversationEvents({
-    // Re-sync mic state after subscribing: another tab may have toggled it.
+    // Re-sync mic and volume after subscribing: another tab may have changed them.
     onReady: async () => {
       if (!togglePending) {
         try {
           muted = Boolean((await getMicState())?.muted);
         } catch {
           // keep the last known mute state
+        }
+      }
+      if (!volumePending) {
+        try {
+          applyVolumeState(await getPlaybackVolume());
+        } catch {
+          // keep the last known volume
         }
       }
       if (signal.aborted) return;
@@ -123,6 +161,40 @@ export async function mountTalkView({ outlet, signal }) {
 
   function restingState() {
     return muted ? ORB_STATES.MUTED : ORB_STATES.IDLE;
+  }
+
+  function applyVolumeState(data) {
+    if (data == null || data.volume == null) return;
+    const volume = Number(data.volume);
+    if (!Number.isFinite(volume)) return;
+    volumeSlider.value = String(Math.round(Math.min(1, Math.max(0, volume)) * 100));
+  }
+
+  function sliderVolume() {
+    return Number(volumeSlider.value) / 100;
+  }
+
+  async function onVolumeInput() {
+    if (!volumeReady) return;
+    queuedVolume = sliderVolume();
+    if (volumePending) return;
+    volumePending = true;
+    try {
+      while (queuedVolume != null) {
+        const requested = queuedVolume;
+        queuedVolume = null;
+        try {
+          applyVolumeState(await setPlaybackVolume(requested));
+        } catch (error) {
+          if (!signal.aborted) {
+            caption.textContent = `Failed to set volume: ${error?.message || error}`;
+          }
+          return;
+        }
+      }
+    } finally {
+      volumePending = false;
+    }
   }
 
   async function onMicTap() {

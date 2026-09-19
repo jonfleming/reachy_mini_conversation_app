@@ -772,10 +772,39 @@ button {
   gap: 20px;
 }
 
+.talk__orb-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  margin-top: 12px;
+}
+
 .talk__orb-wrap {
   display: grid;
   place-items: center;
-  margin-top: 12px;
+}
+
+.talk__volume-slider {
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 28px;
+  height: clamp(160px, 28vw, 240px);
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.talk__volume-slider:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.talk__volume-slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
 }
 
 .talk__caption {

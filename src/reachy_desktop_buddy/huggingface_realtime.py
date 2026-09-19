@@ -7,6 +7,7 @@ import random
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Final, Tuple, Optional
+from collections.abc import Sequence
 
 import httpx
 import numpy as np
@@ -69,6 +70,8 @@ logger = logging.getLogger(__name__)
 
 _RESPONSE_DONE_TIMEOUT: Final[float] = 30.0
 _RESPONSE_REJECTION_RETRY_DELAY: Final[float] = 0.5
+_MAX_RESPONSE_LOG_CHARS: Final[int] = 1500
+_FUNCTION_CALL_ITEM_TYPES: Final[set[str]] = {"function_call", "function"}
 
 
 class InputTranscriptChunksByItem(BaseModel):
@@ -101,21 +104,55 @@ def _event_attr(obj: object, name: str) -> object:
     return getattr(obj, name, None)
 
 
+def _truncate_for_log(value: object, limit: int = _MAX_RESPONSE_LOG_CHARS) -> str:
+    text = repr(value)
+    if len(text) > limit:
+        return text[:limit] + "...(truncated)"
+    return text
+
+
 def _function_call_fields(item: object) -> tuple[str, str, str] | None:
-    if _event_attr(item, "type") != "function_call":
+    item_type = _event_attr(item, "type")
+    if item_type not in _FUNCTION_CALL_ITEM_TYPES:
+        nested = _event_attr(item, "item")
+        if nested is not None and nested is not item:
+            return _function_call_fields(nested)
         return None
     name = _event_attr(item, "name")
     if not isinstance(name, str) or not name:
         return None
     arguments = _event_attr(item, "arguments")
-    args_json = arguments if isinstance(arguments, str) else "{}"
-    call_id = _event_attr(item, "call_id")
+    if isinstance(arguments, str):
+        args_json = arguments
+    elif isinstance(arguments, dict):
+        args_json = json.dumps(arguments)
+    else:
+        args_json = "{}"
+    call_id = _event_attr(item, "call_id") or _event_attr(item, "id")
     return name, args_json, str(call_id) if call_id is not None else str(uuid.uuid4())
 
 
 def _response_output_items(event: object) -> list[object]:
     output = _event_attr(_event_attr(event, "response"), "output")
-    return list(output) if isinstance(output, list) else []
+    if output is None:
+        return []
+    if isinstance(output, dict):
+        return [output]
+    if isinstance(output, (str, bytes)):
+        logger.warning(
+            "Ignoring non-item response.output type %s: %s",
+            type(output).__name__,
+            _truncate_for_log(output),
+        )
+        return []
+    if isinstance(output, Sequence):
+        return list(output)
+    logger.warning(
+        "Unexpected response.output type %s: %s",
+        type(output).__name__,
+        _truncate_for_log(output),
+    )
+    return []
 
 
 class HFNativeRateAudioPCM(TypedDict):
@@ -847,6 +884,12 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
             [(name, call_id) for name, _args, call_id in function_calls],
             sorted(self._in_flight_tool_calls),
         )
+        if not items and status == "completed":
+            logger.warning(
+                "Completed response had no output items; status_details=%s response=%s",
+                _event_attr(response, "status_details"),
+                _truncate_for_log(response),
+            )
         if not function_calls and not self._in_flight_tool_calls:
             if status == "cancelled":
                 logger.info("Response cancelled; listening for the next turn")
@@ -966,7 +1009,10 @@ class HuggingFaceRealtimeHandler(ConversationHandler):
                 await self._send_startup_greeting_prompt()
 
                 async for event in self.connection:
-                    logger.debug("Realtime event: %s", event.type)
+                    event_type = str(getattr(event, "type", "") or "")
+                    logger.debug("Realtime event: %s", event_type)
+                    if "function" in event_type or "tool" in event_type:
+                        logger.info("Realtime tool-related event: %s", event_type)
                     if event.type == "input_audio_buffer.speech_started":
                         self._mark_activity("user_speech_started")
                         self._turn_user_done_at = None
