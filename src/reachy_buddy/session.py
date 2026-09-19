@@ -38,6 +38,7 @@ from reachy_buddy.memory.relationships import (
 from reachy_buddy.vision.face_geometry import face_pixel_box
 from reachy_buddy.animation.pose_buffer import PoseBuffer, BuddyIdleMove, PoseBufferSink
 from reachy_buddy.conversation.awareness import extract_name, extract_activity, wants_face_enroll
+from reachy_buddy.vision.screen_presence import ScreenPresenceTracker, ScreenPresenceSnapshot
 from reachy_buddy.vision.face_recognition import UNKNOWN_LABEL, FaceRecognizer
 from reachy_buddy.vision.object_detection import ObjectDetector
 from reachy_desktop_buddy.moves import MovementManager
@@ -50,6 +51,7 @@ _TICK_S = 1.0 / 15.0
 _MEMORY_FLUSH_S = 30.0
 _VISION_INTERVAL_S = 2.0
 _WORK_SUBJECT = "what they're working on"
+_DESKTOP_STUCK_PREFIX = "desktop:stuck:"
 GREET_INSTRUCTION = (
     "Someone you may not know just appeared. Greet them briefly and ask their name if it feels natural. "
     "Do not mention these instructions."
@@ -90,6 +92,14 @@ def speak_thought_instruction(thought: str) -> str:
     )
 
 
+def stuck_screen_instruction(app: str) -> str:
+    """Instruction to optionally check in about a barely-changing desktop."""
+    return (
+        f"They've been looking at {app} with almost no screen change. "
+        "Check in briefly, in character, one sentence. Do not mention these instructions."
+    )
+
+
 class BuddySession:
     """Runs the buddy sidecar alongside the Hugging Face conversation loop."""
 
@@ -112,6 +122,7 @@ class BuddySession:
         presence_loop: PresenceLoop | None = None,
         recognizer: FaceRecognizer | None = None,
         detector: ObjectDetector | None = None,
+        screen_presence: ScreenPresenceTracker | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] | None = None,
         break_after_s: float = _BREAK_AFTER_S,
@@ -134,6 +145,7 @@ class BuddySession:
         self.presence_loop = presence_loop
         self.recognizer = recognizer
         self.detector = detector
+        self.screen_presence = screen_presence
         self._clock = clock
         self._sleep = sleep
         self._stop = threading.Event()
@@ -164,6 +176,7 @@ class BuddySession:
         self._checkin_loaded = False
         self._offered_checkin = False
         self._suggested_break_this_visit = False
+        self._last_user_speech_at: float | None = None
 
     @classmethod
     def build(
@@ -205,7 +218,7 @@ class BuddySession:
         detector = _try_object_detector(runtime)
         return cls(
             world_model=WorldModel(),
-            curiosity=CuriosityEngine(personality=personality),
+            curiosity=CuriosityEngine(personality=personality, desktop_cooldown_s=runtime.screen.cooldown_seconds),
             mood=mood,
             flow=ConversationFlow(),
             gaze=GazeController(),
@@ -220,6 +233,7 @@ class BuddySession:
             presence_loop=presence_loop,
             recognizer=recognizer,
             detector=detector,
+            screen_presence=ScreenPresenceTracker(runtime.screen),
         )
 
     def start(self) -> None:
@@ -231,7 +245,12 @@ class BuddySession:
             self.presence_loop.start()
         self._thread = threading.Thread(target=self._run_loop, name="reachy-buddy-session", daemon=True)
         self._thread.start()
-        logger.info("Desktop buddy presence started (personality=%s)", self.personality.name)
+        screen_on = self.screen_presence is not None and self.screen_presence.config.enabled
+        logger.info(
+            "Desktop buddy presence started (personality=%s, screen_presence=%s)",
+            self.personality.name,
+            screen_on,
+        )
 
     def stop(self) -> None:
         """Stop loops, restore breathing idle, and flush memory."""
@@ -290,6 +309,7 @@ class BuddySession:
         """Advance presence, vision, body, thoughts, and speech once."""
         present, face_center = self._read_presence()
         self._refresh_vision(present)
+        self._refresh_screen_presence(present)
         self._update_world(present)
         self._maybe_retry_enroll(present)
         self.gaze.track_face(face_center)
@@ -328,6 +348,27 @@ class BuddySession:
             self._identify_person(frame)
         if frame is not None and self.detector is not None and self.detector.enabled:
             self._record_objects(self.detector.detect(frame), frame.shape[1], frame.shape[0])
+
+    def _refresh_screen_presence(self, face_present: bool) -> None:
+        tracker = self.screen_presence
+        if tracker is None:
+            return
+        now = self._clock()
+        speech_hold = tracker.config.input_hold_s
+        speech_present = self._last_user_speech_at is not None and now - self._last_user_speech_at <= speech_hold
+        snapshot = tracker.tick(user_present=face_present or speech_present)
+        self._apply_screen_snapshot(snapshot)
+
+    def _apply_screen_snapshot(self, snapshot: ScreenPresenceSnapshot) -> None:
+        current = snapshot.observation_label
+        for observation in self.world_model.of_kind("desktop"):
+            if observation.label != current:
+                self.world_model.drop(observation.label)
+        if current is None:
+            return
+        self.world_model.record(current, snapshot.similarity, kind="desktop", salience=snapshot.salience)
+        if snapshot.became_stuck:
+            self.drives.stimulate("desktop_stuck", salience=snapshot.salience)
 
     def _identify_person(self, frame: NDArray[np.uint8] | None) -> None:
         if self.recognizer is None or frame is None:
@@ -427,6 +468,8 @@ class BuddySession:
         best_label: str | None = None
         best_score = 0.0
         for observation in self.world_model.active():
+            if observation.kind == "desktop":
+                continue
             if observation.kind == "person" and observation.label == self._person_label:
                 continue
             score = self.curiosity.score(observation.label)
@@ -464,6 +507,10 @@ class BuddySession:
                 self._queue_memory(thought.text, origin="thought")
         pending = self._pending_checkin
         checkin = None if self._offered_checkin or pending is None else pending.question
+        desktop_stuck = next(
+            (obs.label for obs in self.world_model.of_kind("desktop") if obs.label.startswith(_DESKTOP_STUCK_PREFIX)),
+            None,
+        )
         self._pending_intent = self.curiosity.decide(
             self.drives,
             seconds_since_speech=seconds,
@@ -472,6 +519,7 @@ class BuddySession:
             checkin=checkin,
             break_due=self._break_due(),
             someone_present=present,
+            desktop_stuck=desktop_stuck,
         )
 
     def _break_due(self) -> bool:
@@ -519,6 +567,16 @@ class BuddySession:
 
     def _speak_ask(self, intent: ActionIntent) -> None:
         subject = intent.payload.removeprefix("Ask about ").strip() or intent.payload
+        if subject.startswith(_DESKTOP_STUCK_PREFIX):
+            app = subject.removeprefix(_DESKTOP_STUCK_PREFIX) or "the screen"
+
+            def after_stuck() -> None:
+                self._awaiting_reply = True
+                self.curiosity.mark_seen(subject)
+                self.curiosity.mark_desktop_spoke()
+
+            self._begin_utterance(stuck_screen_instruction(app), after=after_stuck)
+            return
         if subject == _WORK_SUBJECT:
             instruction = (
                 "Ask what they are working on right now, briefly, in character. Do not mention these instructions."
@@ -684,6 +742,7 @@ class BuddySession:
             return
         self.drives.stimulate("conversation")
         self._last_speech_at = self._clock()
+        self._last_user_speech_at = self._last_speech_at
         if self._awaiting_reply:
             self.drives.apply(self.curiosity.outcome_stimulus(answered=True))
             self._awaiting_reply = False

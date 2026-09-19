@@ -37,6 +37,7 @@ STIMULUS_BY_KIND: dict[str, Stimulus] = {
     "thought_pondered": Stimulus(curiosity=-0.01, focus=0.02),
     "thought_spoken": Stimulus(curiosity=-0.1, social_energy=-0.05),
     "ambient": Stimulus(),
+    "desktop_stuck": Stimulus(curiosity=0.1, focus=0.05),
 }
 
 

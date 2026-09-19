@@ -1,1 +1,1 @@
-"""Vision: face tracking, face recognition, object detection."""
+"""Vision: face tracking, recognition, objects, and optional screen fingerprints."""

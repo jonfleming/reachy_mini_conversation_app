@@ -28,12 +28,19 @@ class ActionIntent:
 class CuriosityEngine:
     """Turns drives, novelty, and thoughts into a single deliberate action per tick."""
 
-    def __init__(self, familiarity_seconds: float = 600.0, personality: Personality | None = None) -> None:
+    def __init__(
+        self,
+        familiarity_seconds: float = 600.0,
+        personality: Personality | None = None,
+        desktop_cooldown_s: float = 1800.0,
+    ) -> None:
         """Initialize with the novelty horizon and the personality whose thresholds govern decisions."""
         self.familiarity_seconds = familiarity_seconds
         self.personality = personality or Personality()
+        self.desktop_cooldown_s = desktop_cooldown_s
         self._last_seen: dict[str, float] = {}
         self._last_proactive_at = 0.0
+        self._last_desktop_at = 0.0
         self._engagement = 1.0
 
     def score(self, label: str) -> float:
@@ -62,6 +69,7 @@ class CuriosityEngine:
         checkin: str | None = None,
         break_due: bool = False,
         someone_present: bool = True,
+        desktop_stuck: str | None = None,
     ) -> ActionIntent:
         """Pick the single most urgent action the current internal state justifies."""
         personality = self.personality
@@ -77,7 +85,9 @@ class CuriosityEngine:
         cooldown_left = personality.speak_cooldown_s - (time.time() - self._last_proactive_at)
         if cooldown_left > 0:
             return ActionIntent("attend", "", 0.0, f"proactive cooldown has {cooldown_left:.0f}s left")
-        candidates = self._candidates(drives, seconds_since_speech, thought, novel_subject, checkin, break_due)
+        candidates = self._candidates(
+            drives, seconds_since_speech, thought, novel_subject, checkin, break_due, desktop_stuck
+        )
         if not candidates:
             return ActionIntent("attend", "", 0.0, "nothing crosses a threshold")
         chosen = max(candidates, key=lambda candidate: candidate.urgency)
@@ -87,6 +97,11 @@ class CuriosityEngine:
     def mark_spoke(self) -> None:
         """Start the proactive cooldown after an unsolicited utterance is released."""
         self._last_proactive_at = time.time()
+
+    def mark_desktop_spoke(self) -> None:
+        """Start the longer cool-down that limits stuck-screen check-ins."""
+        self._last_desktop_at = time.time()
+        self.mark_spoke()
 
     def outcome_stimulus(self, answered: bool) -> Stimulus:
         """Learn from an utterance's fate and return the drives adjustment for it."""
@@ -104,9 +119,25 @@ class CuriosityEngine:
         novel_subject: str | None,
         checkin: str | None,
         break_due: bool,
+        desktop_stuck: str | None,
     ) -> list[ActionIntent]:
         personality = self.personality
         candidates: list[ActionIntent] = []
+        if desktop_stuck:
+            remaining = self.desktop_cooldown_s - (time.time() - self._last_desktop_at)
+            if remaining > 0:
+                logger.debug("desktop stuck cooldown has %.0fs left; not offering a check-in", remaining)
+            else:
+                app = desktop_stuck.removeprefix("desktop:stuck:") or "the screen"
+                urgency = 0.52 + 0.15 * drives.social_energy * self._engagement
+                candidates.append(
+                    ActionIntent(
+                        "ask",
+                        f"Ask about {desktop_stuck}",
+                        urgency,
+                        f"screen barely changed on {app}; check-in urgency {urgency:.2f}",
+                    )
+                )
         if novel_subject is not None and drives.curiosity >= personality.ask_threshold:
             candidates.append(
                 ActionIntent(

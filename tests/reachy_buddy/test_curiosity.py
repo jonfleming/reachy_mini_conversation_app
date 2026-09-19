@@ -141,6 +141,35 @@ def test_long_visit_can_suggest_a_break() -> None:
     assert intent.kind == "break"
 
 
+def test_desktop_stuck_can_become_a_checkin() -> None:
+    """A stuck-screen observation may become an ask; it is not forced speech."""
+    engine = CuriosityEngine()
+    intent = engine.decide(Drives(), seconds_since_speech=30.0, desktop_stuck="desktop:stuck:Code")
+
+    assert intent.kind == "ask"
+    assert "desktop:stuck:Code" in intent.payload
+
+
+def test_desktop_stuck_stays_quiet_when_drives_are_low() -> None:
+    """Low confidence still refuses a stuck-screen check-in."""
+    engine = CuriosityEngine()
+    intent = engine.decide(Drives(confidence=0.1), seconds_since_speech=30.0, desktop_stuck="desktop:stuck:Code")
+
+    assert intent.kind == "quiet"
+
+
+def test_desktop_stuck_cooldown_allows_only_one_proactive() -> None:
+    """After one stuck-screen comment, the longer cool-down blocks another."""
+    engine = CuriosityEngine(desktop_cooldown_s=1800.0)
+    first = engine.decide(Drives(), seconds_since_speech=30.0, desktop_stuck="desktop:stuck:Code")
+    assert first.kind == "ask"
+    engine.mark_desktop_spoke()
+    engine._last_proactive_at = time.time() - 999.0
+    second = engine.decide(Drives(curiosity=0.95), seconds_since_speech=999.0, desktop_stuck="desktop:stuck:Code")
+
+    assert second.kind != "ask"
+
+
 def test_engagement_stays_bounded() -> None:
     """Repeated outcomes can never push engagement outside its learned range."""
     engine = CuriosityEngine()
