@@ -61,6 +61,16 @@ def test_drop_removes_a_label_immediately() -> None:
     assert active[0].center == (0.5, 0.4)
 
 
+def test_desktop_kind_is_queryable() -> None:
+    """Stuck-screen observations are stored under kind desktop."""
+    model = WorldModel()
+    model.record("desktop:stuck:Code", 0.95, kind="desktop", salience=0.7)
+
+    desktop = model.of_kind("desktop")
+    assert [obs.label for obs in desktop] == ["desktop:stuck:Code"]
+    assert desktop[0].salience == 0.7
+
+
 def test_summary_text_for_an_empty_world() -> None:
     """An empty model says so plainly."""
     assert WorldModel().summary_text() == "Nothing observed yet."

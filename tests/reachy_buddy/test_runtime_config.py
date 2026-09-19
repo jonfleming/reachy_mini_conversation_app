@@ -12,6 +12,8 @@ def test_from_env_defaults_disabled() -> None:
     assert config.enabled is False
     assert config.llama_url is None
     assert config.llama_model == "local"
+    assert config.screen.enabled is False
+    assert config.screen.debug_save is False
 
 
 def test_from_env_reads_enable_and_llama() -> None:
@@ -28,6 +30,36 @@ def test_from_env_reads_enable_and_llama() -> None:
     assert config.llama_url == "http://localhost:8080/v1"
     assert config.llama_model == "gemma"
     assert config.object_onnx is None
+    assert config.screen.enabled is False
+    assert config.screen.interval_sec == 20.0
+    assert config.screen.stuck_min == 12.0
+    assert config.screen.cooldown_min == 30.0
+    assert config.screen.similarity == 0.92
+    assert config.screen.indicator is True
+    assert config.screen.debug_save is False
+
+
+def test_from_env_reads_screen_presence_flags() -> None:
+    """BUDDY_SCREEN_* wires the stuck-on-screen fingerprint loop."""
+    config = BuddyRuntimeConfig.from_env(
+        env={
+            "BUDDY_SCREEN_PRESENCE": "1",
+            "BUDDY_SCREEN_INTERVAL_SEC": "15",
+            "BUDDY_SCREEN_STUCK_MIN": "8",
+            "BUDDY_SCREEN_COOLDOWN_MIN": "45",
+            "BUDDY_SCREEN_SIMILARITY": "0.88",
+            "BUDDY_SCREEN_INDICATOR": "0",
+            "BUDDY_SCREEN_DEBUG_SAVE": "1",
+        }
+    )
+
+    assert config.screen.enabled is True
+    assert config.screen.interval_sec == 15.0
+    assert config.screen.stuck_min == 8.0
+    assert config.screen.cooldown_min == 45.0
+    assert config.screen.similarity == 0.88
+    assert config.screen.indicator is False
+    assert config.screen.debug_save is True
 
 
 def test_from_env_reads_vision_paths(tmp_path: Path) -> None:

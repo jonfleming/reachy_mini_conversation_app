@@ -3,6 +3,7 @@
 import time
 from dataclasses import replace
 from unittest.mock import MagicMock
+from collections.abc import Callable
 
 import numpy as np
 
@@ -13,6 +14,7 @@ from reachy_buddy.session import (
     BuddySession,
     checkin_instruction,
     named_greet_instruction,
+    stuck_screen_instruction,
     speak_thought_instruction,
 )
 from reachy_buddy.animation.gaze import GazeController
@@ -23,9 +25,11 @@ from reachy_buddy.core.personality import Personality
 from reachy_buddy.core.world_model import WorldModel
 from reachy_buddy.animation.planner import AnimationPlanner
 from reachy_buddy.conversation.flow import ConversationFlow, ConversationPhase
+from reachy_buddy.vision.window_meta import window_meta_from_parts
 from reachy_buddy.core.emotional_state import EmotionalState
 from reachy_buddy.memory.relationships import TAG_ACTIVITY, CallbackCandidate
 from reachy_buddy.animation.pose_buffer import PoseBuffer, PoseBufferSink
+from reachy_buddy.vision.screen_presence import ScreenPresenceConfig, ScreenPresenceTracker
 
 
 class _Tracker:
@@ -51,6 +55,8 @@ def _session(
     memory: MagicMock | None = None,
     break_after_s: float = 2700.0,
     reply_timeout_s: float = 90.0,
+    screen_presence: ScreenPresenceTracker | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> tuple[BuddySession, list[str]]:
     mood = EmotionalState()
     buffer = PoseBuffer()
@@ -74,6 +80,8 @@ def _session(
         memory=memory,
         break_after_s=break_after_s,
         reply_timeout_s=reply_timeout_s,
+        screen_presence=screen_presence,
+        clock=time.monotonic if clock is None else clock,
     )
 
     def begin(instruction: str, after: object, glance: object = None) -> None:
@@ -320,3 +328,99 @@ def test_farewell_digests_a_named_visit() -> None:
     assert len(digested) == 1
     assert digested[0][0] == "Jon"
     assert digested[0][1]
+
+
+class _Clock:
+    """Session/screen clock the tests can step."""
+
+    def __init__(self) -> None:
+        self.now = 10.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _screen_tracker(clock: _Clock, enabled: bool = True) -> ScreenPresenceTracker:
+    return ScreenPresenceTracker(
+        ScreenPresenceConfig(
+            enabled=enabled,
+            interval_sec=0.0,
+            stuck_min=1.0 / 60.0,
+            indicator=False,
+        ),
+        grabber=lambda: np.full((90, 160, 3), 48, dtype=np.uint8),
+        window_meta_fn=lambda: window_meta_from_parts("Code.exe", "app.py — workspace"),
+        input_age_fn=lambda: None,
+        secure_fn=lambda: False,
+        clock=clock,
+    )
+
+
+def test_session_records_stuck_desktop_observation() -> None:
+    """Enabled + static screen + presence for T writes desktop:stuck:Code."""
+    clock = _Clock()
+    face = TrackedFace(center=(0.5, 0.5), size=0.2, last_seen=1.0)
+    session, _spoken = _session(face, screen_presence=_screen_tracker(clock), clock=clock)
+
+    session.tick()
+    assert session.world_model.of_kind("desktop") == []
+    clock.advance(1.0)
+    session.tick()
+
+    labels = [obs.label for obs in session.world_model.of_kind("desktop")]
+    assert labels == ["desktop:stuck:Code"]
+    assert session.screen_presence is not None
+    assert session.screen_presence.capture_count >= 1
+
+
+def test_session_can_check_in_about_a_stuck_screen() -> None:
+    """Curiosity may voice one stuck-screen check-in, then cools down."""
+    clock = _Clock()
+    face = TrackedFace(center=(0.5, 0.5), size=0.2, last_seen=1.0)
+    session, spoken = _session(face, screen_presence=_screen_tracker(clock), clock=clock)
+    session.tick()
+    spoken.clear()
+    _quiet_after_greet(session)
+    session.drives.playfulness = 0.0
+    clock.advance(1.0)
+    session.tick()
+
+    assert spoken == [stuck_screen_instruction("Code")]
+    spoken.clear()
+    session.curiosity._last_proactive_at = time.time() - 999.0
+    session.tick()
+    assert spoken == []
+
+
+def test_disabled_screen_presence_never_captures_or_records() -> None:
+    """Toggle off means zero captures and no desktop observations."""
+    clock = _Clock()
+    face = TrackedFace(center=(0.5, 0.5), size=0.2, last_seen=1.0)
+    tracker = _screen_tracker(clock, enabled=False)
+    session, spoken = _session(face, screen_presence=tracker, clock=clock)
+    session.tick()
+    clock.advance(1.0)
+    session.tick()
+
+    assert tracker.capture_count == 0
+    assert session.world_model.of_kind("desktop") == []
+    assert all("screen change" not in line for line in spoken)
+
+
+def test_stuck_screen_does_not_queue_hindsight_images() -> None:
+    """Screen fingerprints stay local; Hindsight only ever sees text memories."""
+    clock = _Clock()
+    face = TrackedFace(center=(0.5, 0.5), size=0.2, last_seen=1.0)
+    session, _spoken = _session(face, screen_presence=_screen_tracker(clock), clock=clock)
+    session.tick()
+    clock.advance(1.0)
+    session.tick()
+
+    assert session.world_model.of_kind("desktop")
+    assert all(isinstance(item.content, str) for item in session._pending_memories)
+    assert all("desktop:stuck" not in item.content for item in session._pending_memories)
+    assert session.screen_presence is not None
+    assert session.screen_presence.debug_saves == 0

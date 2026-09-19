@@ -121,6 +121,15 @@ Copy `.env.example` to `.env` when you want to point Hugging Face at your own lo
 | `BUDDY_LLAMA_URL` | Optional OpenAI-compatible llama.cpp origin (for example `http://localhost:8080/v1`) used only for private thoughts. Template thoughts are used when unset or unreachable. |
 | `BUDDY_FACES_PATH` | NPZ file of enrolled face encodings. Defaults to `~/.reachy_buddy/faces.npz`. |
 | `BUDDY_OBJECT_ONNX` / `BUDDY_OBJECT_LABELS` | Optional YOLO-style ONNX model and label file. Object detection stays off until both paths exist. |
+| `BUDDY_SCREEN_PRESENCE` | Set to `1` to enable local screen fingerprints for stuck-on-screen detection. Default `0` (no captures). |
+| `BUDDY_SCREEN_INTERVAL_SEC` | Seconds between fingerprints. Defaults to `20`. |
+| `BUDDY_SCREEN_STUCK_MIN` | Minutes of presence plus a barely-changing UI before a `desktop:stuck:*` observation. Defaults to `12`. |
+| `BUDDY_SCREEN_COOLDOWN_MIN` | Minutes after a proactive stuck-screen check-in before Curiosity may offer another. Defaults to `30`. |
+| `BUDDY_SCREEN_SIMILARITY` | Fingerprint similarity in `[0, 1]` that counts as "barely changed". Defaults to `0.92`. |
+| `BUDDY_SCREEN_INDICATOR` | When `1` (default), log that fingerprinting is on. No screenshot files. |
+| `BUDDY_SCREEN_DEBUG_SAVE` | Set to `1` only to write downscaled debug frames. Default `0`. |
+
+Screen presence is opt-in and local. Leave `BUDDY_SCREEN_PRESENCE` unset or `0` for zero captures. To enable it, set `BUDDY_ENABLED=1` and `BUDDY_SCREEN_PRESENCE=1`. Buddy then fingerprints the primary monitor on `BUDDY_SCREEN_INTERVAL_SEC`, discards the pixels after hashing, and records a `desktop:stuck:<app>` WorldModel observation when you are present and the UI barely changes for `BUDDY_SCREEN_STUCK_MIN` minutes. Curiosity may check in at most once per `BUDDY_SCREEN_COOLDOWN_MIN`; it never forces speech. Locked / UAC / password / 2FA titles are skipped. Raw frames are not written to disk (unless you turn on `BUDDY_SCREEN_DEBUG_SAVE`), not sent to Hindsight, and not uploaded.
 
 ### Hugging Face Connection Modes
 

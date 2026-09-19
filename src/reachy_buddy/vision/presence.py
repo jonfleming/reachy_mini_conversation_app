@@ -1,4 +1,4 @@
-"""Continuous face presence: debounced primary-face tracking over a frame stream."""
+"""Continuous face presence, plus a desk-occupancy combine used by screen presence."""
 
 import time
 import logging
@@ -137,3 +137,17 @@ class PresenceLoop:
                     if self._on_presence_change is not None:
                         self._on_presence_change(present)
             self._stop.wait(self._interval)
+
+
+def present_for_desktop(
+    *,
+    face_present: bool,
+    seconds_since_user_signal: float | None,
+    hold_s: float = 180.0,
+) -> bool:
+    """Return whether a face or a still-warm speech/input signal says someone is at the desk."""
+    if face_present:
+        return True
+    if seconds_since_user_signal is None:
+        return False
+    return seconds_since_user_signal <= hold_s
