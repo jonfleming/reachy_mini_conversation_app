@@ -82,7 +82,7 @@ def title_is_denied(title: str) -> bool:
 
 def process_app_label(process_name: str) -> str:
     """Turn a process path or image name into a short observation label."""
-    stem = Path(process_name).stem.strip()
+    stem = Path(process_name.replace("\\", "/")).stem.strip()
     cleaned = "".join(char for char in stem if char.isalnum() or char in "-_")
     return (cleaned or "screen")[:_APP_LABEL_MAX]
 
@@ -94,7 +94,7 @@ def window_meta_from_parts(process_name: str, title: str, *, secure: bool = Fals
     denied = title_is_denied(scrubbed)
     process_secure = label.lower() in _SECURE_PROCESSES
     return WindowMeta(
-        process_name=Path(process_name).name,
+        process_name=Path(process_name.replace("\\", "/")).name,
         title="" if denied else scrubbed,
         app_label=label,
         secure=secure or process_secure,
@@ -123,8 +123,16 @@ def seconds_since_input() -> float | None:
     return None
 
 
+def _win_dll(name: str) -> ctypes.CDLL:
+    factory = getattr(ctypes, "WinDLL", ctypes.CDLL)
+    loaded = factory(name)
+    if not isinstance(loaded, ctypes.CDLL):
+        raise TypeError("Win32 DLL load returned an unexpected object")
+    return loaded
+
+
 def _read_win32_foreground() -> WindowMeta:
-    user32 = ctypes.windll.user32
+    user32 = _win_dll("user32")
     hwnd = int(user32.GetForegroundWindow())
     if not hwnd:
         return WindowMeta(secure=True, app_label="screen")
@@ -134,20 +142,20 @@ def _read_win32_foreground() -> WindowMeta:
 
 
 def _win32_window_title(hwnd: int) -> str:
-    length = int(ctypes.windll.user32.GetWindowTextLengthW(hwnd))
+    length = int(_win_dll("user32").GetWindowTextLengthW(hwnd))
     if length <= 0:
         return ""
     buffer = ctypes.create_unicode_buffer(length + 1)
-    ctypes.windll.user32.GetWindowTextW(hwnd, buffer, length + 1)
+    _win_dll("user32").GetWindowTextW(hwnd, buffer, length + 1)
     return buffer.value
 
 
 def _win32_process_name(hwnd: int) -> str:
     pid = wintypes.DWORD()
-    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    _win_dll("user32").GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     if pid.value == 0:
         return ""
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = _win_dll("kernel32")
     process = kernel32.OpenProcess(0x1000, False, pid.value)
     if not process:
         return ""
@@ -161,7 +169,7 @@ def _win32_process_name(hwnd: int) -> str:
 
 
 def _win32_desktop_is_secure() -> bool:
-    user32 = ctypes.windll.user32
+    user32 = _win_dll("user32")
     desktop = user32.OpenInputDesktop(0, False, 0x0001)
     if not desktop:
         return True
@@ -189,8 +197,8 @@ class _LastInputInfo(ctypes.Structure):
 def _win32_seconds_since_input() -> float | None:
     info = _LastInputInfo()
     info.cbSize = ctypes.sizeof(_LastInputInfo)
-    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+    if not _win_dll("user32").GetLastInputInfo(ctypes.byref(info)):
         return None
-    now = ctypes.windll.kernel32.GetTickCount()
-    elapsed_ms = (now - info.dwTime) & 0xFFFFFFFF
+    now = int(_win_dll("kernel32").GetTickCount())
+    elapsed_ms = (now - int(info.dwTime)) & 0xFFFFFFFF
     return elapsed_ms / 1000.0

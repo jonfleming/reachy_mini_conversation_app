@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from reachy_buddy.vision.presence import present_for_desktop
 from reachy_buddy.vision.window_meta import (
     WindowMeta,
+    _win_dll,
     desktop_is_secure,
     seconds_since_input,
     read_foreground_window,
@@ -101,9 +102,11 @@ class ScreenPresenceSnapshot:
 def downscale_gray(frame: NDArray[np.uint8], max_width: int = _MAX_GRAY_WIDTH) -> NDArray[np.uint8]:
     """Convert a BGR or gray frame to grayscale and cap width."""
     if frame.ndim == 3:
-        gray = (0.114 * frame[:, :, 0] + 0.587 * frame[:, :, 1] + 0.299 * frame[:, :, 2]).astype(np.uint8)
+        gray = np.ascontiguousarray(
+            (0.114 * frame[:, :, 0] + 0.587 * frame[:, :, 1] + 0.299 * frame[:, :, 2]).astype(np.uint8)
+        )
     else:
-        gray = np.asarray(frame, dtype=np.uint8)
+        gray = np.ascontiguousarray(frame)
     height, width = gray.shape[:2]
     if width <= max_width or max_width <= 0:
         return gray
@@ -159,8 +162,8 @@ class _BitmapInfo(ctypes.Structure):
 
 
 def _grab_win32_primary() -> NDArray[np.uint8] | None:
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
+    user32 = _win_dll("user32")
+    gdi32 = _win_dll("gdi32")
     width = int(user32.GetSystemMetrics(0))
     height = int(user32.GetSystemMetrics(1))
     if width <= 0 or height <= 0:
